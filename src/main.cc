@@ -182,7 +182,8 @@ int main(int argc, char **argv) {
       const Vec3 center = t.center();
 
       // TODO: cast to closest point on disk instead of center
-      bvh::Ray<Scalar> ray(center, center - sun_center, 0.0, bsphere.radius);
+      bvh::Ray<Scalar> ray(center, bvh::normalize(sun_center - center), 0.0,
+                           2.0 * bsphere.radius);
       bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
           bvh, triangles.data());
       bvh::SingleRayTraverser<Bvh> traverser(bvh);
