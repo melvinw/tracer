@@ -15,14 +15,27 @@
 #include <bvh/sweep_sah_builder.hpp>
 #include <bvh/triangle.hpp>
 #include <bvh/vector.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/transform.hpp>
 #include <tiny_gltf.h>
 
-using Scalar = float;
+using Scalar = double;
 using Vec3 = bvh::Vector3<Scalar>;
 using Triangle = bvh::Triangle<Scalar>;
 using Bvh = bvh::Bvh<Scalar>;
 using BoundingBox = bvh::BoundingBox<Scalar>;
 using Sphere = bvh::Sphere<Scalar>;
+
+struct Vertex {
+  glm::vec4 position;
+  glm::vec4 normal;
+};
+
+struct Mesh {
+  std::vector<Vertex> vertices;
+  std::vector<uint32_t> indices;
+};
 
 int main(int argc, char **argv) {
   assert(argc == 2);
@@ -66,18 +79,16 @@ int main(int argc, char **argv) {
     }
   }
 
-  std::vector<bvh::Triangle<float>> triangles;
-  std::map<int, std::pair<size_t, size_t>> mesh_triangles;
+  std::vector<Mesh> meshes(model.meshes.size());
   for (const auto &[midx, nodes] : mesh_nodes) {
     std::ignore = nodes;
     assert(static_cast<size_t>(midx) < model.meshes.size());
     const auto &mesh = model.meshes[midx];
-    size_t start = triangles.size();
     for (const auto &prim : mesh.primitives) {
       // TODO: support more than just triangles
       assert(prim.mode == TINYGLTF_MODE_TRIANGLES);
 
-      std::vector<Vec3> vertices;
+      auto &vertices = meshes[midx].vertices;
       {
         const auto pidx = prim.attributes.at("POSITION");
         const tinygltf::Accessor &accessor = model.accessors[pidx];
@@ -92,11 +103,31 @@ int main(int argc, char **argv) {
                 .data[bufferView.byteOffset + accessor.byteOffset];
         vertices.resize(accessor.count);
         for (size_t i = 0; i < accessor.count; i++) {
-          vertices[i] = *reinterpret_cast<const Vec3 *>(&data[i * stride]);
+          vertices[i].position = glm::vec4(
+              reinterpret_cast<const glm::vec3 *>(&data[i * stride])[0], 1);
         }
       }
 
-      std::vector<uint32_t> indices;
+      if (prim.attributes.count("NORMAL")) {
+        const auto nidx = prim.attributes.at("NORMAL");
+        const tinygltf::Accessor &accessor = model.accessors[nidx];
+        const tinygltf::BufferView &bufferView =
+            model.bufferViews[accessor.bufferView];
+        const tinygltf::Buffer &buffer = model.buffers[bufferView.buffer];
+        const int stride = accessor.ByteStride(bufferView);
+        assert(accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT &&
+               accessor.type == TINYGLTF_TYPE_VEC3);
+        const uint8_t *data =
+            (const uint8_t *)&buffer
+                .data[bufferView.byteOffset + accessor.byteOffset];
+        assert(accessor.count == vertices.size());
+        for (size_t i = 0; i < accessor.count; i++) {
+          vertices[i].normal = glm::vec4(
+              reinterpret_cast<const glm::vec3 *>(&data[i * stride])[0], 0);
+        }
+      }
+
+      auto &indices = meshes[midx].indices;
       {
         const tinygltf::Accessor &accessor = model.accessors[prim.indices];
         const tinygltf::BufferView &bufferView =
@@ -136,14 +167,53 @@ int main(int argc, char **argv) {
         }
       }
       assert(indices.size() % 3 == 0);
-      for (size_t i = 0; i < indices.size(); i += 3) {
-        triangles.push_back(Triangle(vertices[indices[i]],
-                                     vertices[indices[i + 1]],
-                                     vertices[indices[i + 2]]));
-      }
     }
-    size_t end = triangles.size() - 1;
-    mesh_triangles[midx] = {start, end};
+  }
+
+  std::vector<bvh::Triangle<Scalar>> triangles;
+  std::map<int, std::pair<size_t, size_t>> node_triangles;
+  for (const auto &[midx, nodes] : mesh_nodes) {
+    const auto &mesh = meshes[midx];
+    for (const auto nidx : nodes) {
+      const auto &node = model.nodes[nidx];
+      size_t start = triangles.size();
+
+      glm::vec3 translation =
+          node.translation.size() == 3
+              ? glm::vec3(node.translation[0], node.translation[1],
+                          node.translation[2])
+              : glm::vec3(0.0f);
+      glm::vec4 rotation = node.rotation.size() == 4
+                               ? glm::vec4(node.rotation[0], node.rotation[1],
+                                           node.rotation[2], node.rotation[3])
+                               : glm::vec4(0.0f);
+      glm::vec3 scale =
+          node.scale.size() == 3
+              ? glm::vec3(node.scale[0], node.scale[1], node.scale[2])
+              : glm::vec3(1.0f);
+      auto trs = glm::mat4(1.0f);
+      if (glm::any(glm::notEqual(translation, glm::vec3(0.0f)))) {
+        trs = glm::translate(trs, translation);
+      }
+      if (glm::any(glm::notEqual(rotation, glm::vec4(0.0f)))) {
+        trs *= glm::toMat4(
+            glm::quat(rotation.w, rotation.x, rotation.y, rotation.z));
+      }
+      if (glm::any(glm::notEqual(scale, glm::vec3(1.0f)))) {
+        trs = glm::scale(trs, scale);
+      }
+
+      for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+        glm::vec4 v0 = trs * mesh.vertices[mesh.indices[i]].position;
+        glm::vec4 v1 = trs * mesh.vertices[mesh.indices[i + 1]].position;
+        glm::vec4 v2 = trs * mesh.vertices[mesh.indices[i + 2]].position;
+        triangles.push_back(Triangle(Vec3(v0.x, v0.y, v0.z),
+                                     Vec3(v1.x, v1.y, v1.z),
+                                     Vec3(v2.x, v2.y, v2.z)));
+      }
+      size_t end = triangles.size() - 1;
+      node_triangles[nidx] = {start, end};
+    }
   }
 
   std::cerr << "found " << triangles.size() << " triangles. constructing BVH"
@@ -156,22 +226,22 @@ int main(int argc, char **argv) {
   bvh::SweepSahBuilder<Bvh> builder(bvh);
   builder.build(global_bbox, bboxes.get(), centers.get(), triangles.size());
 
-  Scalar radius = bvh::length(global_bbox.diagonal());
+  Scalar radius = bvh::length(global_bbox.diagonal()) / 2.0;
   Sphere bsphere(global_bbox.center(), radius);
   std::cerr << "bounding sphere at (" << bsphere.origin[0] << ", "
             << bsphere.origin[1] << ", " << bsphere.origin[2] << ") w/ radius "
             << bsphere.radius << std::endl;
 
   // TODO: Sun is fixed at high noon right now. Make this configurable.
-  Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
+  Vec3 sun_center = bsphere.origin + Vec3(0, 0, -bsphere.radius);
   std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1] << ", "
             << sun_center[2] << ")" << std::endl;
 
   // First pass to accumulate light on each mesh
-  for (const auto &[midx, interval] : mesh_triangles) {
-    const auto &mesh = model.meshes[midx];
+  for (const auto &[nidx, interval] : node_triangles) {
+    const auto &node = model.nodes[nidx];
     const auto [start, end] = interval;
-    std::cerr << "launching " << end - start << " rays from " << mesh.name
+    std::cerr << "launching " << end - start << " rays from " << node.name
               << std::endl;
 
     size_t hits = 0;
@@ -188,17 +258,15 @@ int main(int argc, char **argv) {
           bvh, triangles.data());
       bvh::SingleRayTraverser<Bvh> traverser(bvh);
 
-      if (auto hit = traverser.traverse(ray, primitive_intersector)) {
+      if (auto hit = traverser.traverse(ray, primitive_intersector);
+          hit.has_value()) {
         auto tidx = hit->primitive_index;
         if (tidx >= start && tidx <= end) {
-          // Hit mesh we originated from
           self_hits++;
         } else {
-          // Hit another mesh
           hits++;
         }
       } else {
-        // Miss! Saw the sun
         misses++;
       }
     }
