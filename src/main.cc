@@ -9,12 +9,17 @@
 
 #include <bvh/bounding_box.hpp>
 #include <bvh/bvh.hpp>
+#include <bvh/heuristic_primitive_splitter.hpp>
+#include <bvh/leaf_collapser.hpp>
+#include <bvh/node_layout_optimizer.hpp>
+#include <bvh/parallel_reinsertion_optimizer.hpp>
 #include <bvh/primitive_intersectors.hpp>
 #include <bvh/single_ray_traverser.hpp>
 #include <bvh/sphere.hpp>
 #include <bvh/sweep_sah_builder.hpp>
 #include <bvh/triangle.hpp>
 #include <bvh/vector.hpp>
+
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
@@ -223,8 +228,15 @@ int main(int argc, char **argv) {
       triangles.data(), triangles.size());
   auto global_bbox =
       bvh::compute_bounding_boxes_union(bboxes.get(), triangles.size());
+
   bvh::SweepSahBuilder<Bvh> builder(bvh);
   builder.build(global_bbox, bboxes.get(), centers.get(), triangles.size());
+
+  bvh::ParallelReinsertionOptimizer<Bvh> reinsertion_optimizer(bvh);
+  reinsertion_optimizer.optimize();
+
+  bvh::NodeLayoutOptimizer layout_optimizer(bvh);
+  layout_optimizer.optimize();
 
   Scalar radius = bvh::length(global_bbox.diagonal()) / 2.0;
   Sphere bsphere(global_bbox.center(), radius);
@@ -233,7 +245,7 @@ int main(int argc, char **argv) {
             << bsphere.radius << std::endl;
 
   // TODO: Sun is fixed at high noon right now. Make this configurable.
-  Vec3 sun_center = bsphere.origin + Vec3(0, 0, -bsphere.radius);
+  Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
   std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1] << ", "
             << sun_center[2] << ")" << std::endl;
 
