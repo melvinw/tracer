@@ -221,8 +221,8 @@ int main(int argc, char **argv) {
     }
   }
 
-  std::cerr << "found " << triangles.size() << " triangles. constructing BVH"
-            << std::endl;
+  std::cerr << "found " << model.nodes.size() << " models consisting of "
+            << triangles.size() << " triangles. constructing BVH" << std::endl;
   Bvh bvh;
   auto [bboxes, centers] = bvh::compute_bounding_boxes_and_centers(
       triangles.data(), triangles.size());
@@ -253,19 +253,20 @@ int main(int argc, char **argv) {
   for (const auto &[nidx, interval] : node_triangles) {
     const auto &node = model.nodes[nidx];
     const auto [start, end] = interval;
-    std::cerr << "launching " << end - start << " rays from " << node.name
-              << std::endl;
+    std::cerr << "launching " << end - start + 1 << " rays from " << node.name
+              << "(" << start << ", " << end << ")" << std::endl;
 
     size_t hits = 0;
     size_t self_hits = 0;
     size_t misses = 0;
     for (size_t i = start; i <= end; i++) {
       const auto &t = triangles[i];
-      const Vec3 center = t.center();
 
+      // offset ray origin by scaled down normal to avoid self intersections.
+      auto origin = t.center() + t.n * .000000001;
       // TODO: cast to closest point on disk instead of center
-      bvh::Ray<Scalar> ray(center, bvh::normalize(sun_center - center), 0.0,
-                           2.0 * bsphere.radius);
+      bvh::Ray<Scalar> ray(origin, bvh::normalize(sun_center - origin),
+                           0.000001, 2.0 * bsphere.radius);
       bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
           bvh, triangles.data());
       bvh::SingleRayTraverser<Bvh> traverser(bvh);
@@ -282,9 +283,8 @@ int main(int argc, char **argv) {
         misses++;
       }
     }
-    std::cerr << "\thits: " << hits << std::endl
-              << "\tself_hits: " << self_hits << std::endl
-              << "\tmisses: " << misses << std::endl;
+    std::cerr << "\thits: " << hits << ", self_hits: " << self_hits
+              << ", misses: " << misses << std::endl;
   }
 
   // TODO: Second pass to scatter some portion of light form each surface
