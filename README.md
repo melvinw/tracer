@@ -11,6 +11,15 @@ favorite packager manager.
 pip install meson ninja
 ```
 
+- (Required) [pkg-config](https://www.freedesktop.org/wiki/Software/pkg-config/)
+- (Required) [GLM](https://github.com/g-truc/glm) 
+- (Optional) [OpenMP](https://www.openmp.org/)
+
+On Debian you can install these dependencies with:
+```
+apt-get install libomp-dev libglm-dev pkg-config
+```
+
 ## Building
 To build, run:
 ```
