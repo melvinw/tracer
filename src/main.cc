@@ -179,6 +179,7 @@ int main(int argc, char **argv) {
   std::map<int, std::pair<size_t, size_t>> node_triangles;
   for (const auto &[midx, nodes] : mesh_nodes) {
     const auto &mesh = meshes[midx];
+		// TODO: accumulate transforms through ancestor graph
     for (const auto nidx : nodes) {
       const auto &node = model.nodes[nidx];
       size_t start = triangles.size();
