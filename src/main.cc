@@ -57,8 +57,9 @@ int main(int argc, char **argv) {
     instance_triangles[idx] = {start, end};
   }
 
-  std::cerr << "found " << mesh_instances.size() << " models consisting of "
-            << triangles.size() << " triangles. constructing BVH" << std::endl;
+  std::cerr << "found " << triangles.size() << " triangles comprising "
+            << mesh_instances.size() << " models. constructing BVH"
+            << std::endl;
   Bvh bvh;
   auto [bboxes, centers] = bvh::compute_bounding_boxes_and_centers(
       triangles.data(), triangles.size());
