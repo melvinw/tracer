@@ -1,9 +1,16 @@
 project('tracer', 'cpp')
 
-inc_dirs = include_directories(
-  'thirdparty/bvh/include',
-  'thirdparty/tinygltf'
-)
+inc_dirs = [
+	include_directories(
+		'thirdparty/bvh/include',
+		'thirdparty/tinygltf'
+	),
+	include_directories(
+		'include',
+		is_system: false
+	),
+]
+
 cxx_flags = [
   '-std=c++17',
   '-Wall',
@@ -12,6 +19,9 @@ cxx_flags = [
   '-Wno-error=unknown-pragmas'
 ]
 
+omp_dep = dependency('openmp', required: false)
+glm_dep = dependency('glm', required: true)
+
 tinygltf = build_target(
   'tinygltf',
   'thirdparty/tinygltf/tiny_gltf.cc',
@@ -19,14 +29,11 @@ tinygltf = build_target(
   cpp_args: cxx_flags
 )
 
-omp_dep = dependency('openmp', required: false)
-glm_dep = dependency('glm', required: true)
-
 executable(
   'tracer',
-  'src/main.cc',
+  ['src/main.cc', 'src/gltf_loader.cc'],
   include_directories: inc_dirs,
-  link_with: tinygltf,
+  link_with: [tinygltf,],
   dependencies: [glm_dep, omp_dep],
   cpp_args: cxx_flags
 )
