@@ -19,10 +19,13 @@ tinygltf = build_target(
   cpp_args: cxx_flags
 )
 
+glm_dep = dependency('glm', required: false)
+
 executable(
   'tracer',
   'src/main.cc',
   include_directories: inc_dirs,
   link_with: tinygltf,
+  dependencies: [glm_dep],
   cpp_args: cxx_flags
 )
