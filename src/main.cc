@@ -83,6 +83,8 @@ int main(int argc, char **argv) {
 
   // TODO: Sun is fixed at high noon right now. Make this configurable.
   Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
+  Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
+  Scalar d = -bvh::dot(sun_center, sun_norm);
   std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1] << ", "
             << sun_center[2] << ")" << std::endl;
 
@@ -102,9 +104,8 @@ int main(int argc, char **argv) {
 
       // offset ray origin by scaled down normal to avoid self intersections.
       auto origin = t.center() + t.n * .000000001;
-      // TODO: cast to closest point on disk instead of center
-      bvh::Ray<Scalar> ray(origin, bvh::normalize(sun_center - origin),
-                           0.000001, 2.0 * bsphere.radius);
+      auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
+      bvh::Ray<Scalar> ray(origin, dir, 0.000001, 2.0 * bsphere.radius);
       bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
           bvh, triangles.data());
       bvh::SingleRayTraverser<Bvh> traverser(bvh);
