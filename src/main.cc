@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 #include <string>
@@ -17,6 +18,7 @@
 #include <bvh/sweep_sah_builder.hpp>
 #include <bvh/triangle.hpp>
 #include <bvh/vector.hpp>
+#include <json.hpp>
 
 #include "gltf_loader.h"
 #include "types.h"
@@ -28,10 +30,21 @@ using Bvh = bvh::Bvh<Scalar>;
 using BoundingBox = bvh::BoundingBox<Scalar>;
 using Sphere = bvh::Sphere<Scalar>;
 
+struct Stats {
+  uint32_t hits;
+  uint32_t self_hits;
+  uint32_t misses;
+};
+
 int main(int argc, char **argv) {
+  // TODO: use a real logging library
+  bool debug = getenv("DEBUG") != nullptr;
+
   assert(argc == 2);
   std::string gltf_path(argv[1]);
-  std::cerr << "loading " << gltf_path << std::endl;
+  if (debug) {
+    std::cerr << "loading " << gltf_path << std::endl;
+  }
   auto [meshes, mesh_instances] = LoadMeshesFromGLTF(gltf_path);
 
   std::vector<Triangle> triangles;
@@ -57,9 +70,11 @@ int main(int argc, char **argv) {
     instance_triangles[idx] = {start, end};
   }
 
-  std::cerr << "found " << triangles.size() << " triangles comprising "
-            << mesh_instances.size() << " models. constructing BVH"
-            << std::endl;
+  if (debug) {
+    std::cerr << "found " << triangles.size() << " triangles comprising "
+              << mesh_instances.size() << " models. constructing BVH"
+              << std::endl;
+  }
   Bvh bvh;
   auto [bboxes, centers] = bvh::compute_bounding_boxes_and_centers(
       triangles.data(), triangles.size());
@@ -77,28 +92,33 @@ int main(int argc, char **argv) {
 
   Scalar radius = bvh::length(global_bbox.diagonal()) / 2.0;
   Sphere bsphere(global_bbox.center(), radius);
-  std::cerr << "bounding sphere at (" << bsphere.origin[0] << ", "
-            << bsphere.origin[1] << ", " << bsphere.origin[2] << ") w/ radius "
-            << bsphere.radius << std::endl;
+  if (debug) {
+    std::cerr << "bounding sphere at (" << bsphere.origin[0] << ", "
+              << bsphere.origin[1] << ", " << bsphere.origin[2]
+              << ") w/ radius " << bsphere.radius << std::endl;
+  }
 
   // TODO: Sun is fixed at high noon right now. Make this configurable.
   Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
   Scalar d = -bvh::dot(sun_center, sun_norm);
-  std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1] << ", "
-            << sun_center[2] << ")" << std::endl;
+  if (debug) {
+    std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1]
+              << ", " << sun_center[2] << ")" << std::endl;
+  }
 
   // First pass to accumulate light on each mesh
+  std::vector<Stats> stats(mesh_instances.size());
   for (const auto &[idx, interval] : instance_triangles) {
     const auto &instance = mesh_instances[idx];
     const auto [start, end] = interval;
-    std::cerr << "launching " << end - start + 1 << " rays from "
-              << instance.name << "(" << start << ", " << end << ")"
-              << std::endl;
+    if (debug) {
+      std::cerr << "launching " << end - start + 1 << " rays from "
+                << instance.name << "(" << start << ", " << end << ")"
+                << std::endl;
+    }
 
-    size_t hits = 0;
-    size_t self_hits = 0;
-    size_t misses = 0;
+    Stats &s = stats[idx];
     for (size_t i = start; i <= end; i++) {
       const auto &t = triangles[i];
 
@@ -114,21 +134,29 @@ int main(int argc, char **argv) {
           hit.has_value()) {
         auto tidx = hit->primitive_index;
         if (tidx >= start && tidx <= end) {
-          self_hits++;
+          s.self_hits++;
         } else {
-          hits++;
+          s.hits++;
         }
       } else {
-        misses++;
+        s.misses++;
       }
     }
-    std::cerr << "\thits: " << hits << ", self_hits: " << self_hits
-              << ", misses: " << misses << std::endl;
   }
 
   // TODO: Second pass to scatter some portion of light form each surface
 
-  // TODO: output copy of gltf from user w/ radiance annotations
+  nlohmann::json output;
+  for (size_t i = 0; i < mesh_instances.size(); i++) {
+    const auto &instance = mesh_instances[i];
+    const auto &s = stats[i];
+    output[instance.name] = {
+        {"hits", s.hits},
+        {"self_hits", s.self_hits},
+        {"misses", s.misses},
+    };
+  }
+  std::cout << output.dump(4);
 
   return 0;
 }
