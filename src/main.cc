@@ -151,10 +151,11 @@ int main(int argc, char **argv) {
           s.misses++;
           // for details on this math see pp14 of
           // https://www.sciencedirect.com/science/article/pii/S0304380017304842
-          Scalar flux = sun_flux * glm::abs(bvh::dot(t.n, sun_norm)) /
-                        Scalar(rays_per_triangle);
-          s.absorbed_flux += absorb_factor * flux;
-          s.scattered_flux += scatter_factor * s.absorbed_flux;
+          Scalar absorbed = absorb_factor * sun_flux *
+                            glm::abs(bvh::dot(t.n, sun_norm)) /
+                            Scalar(rays_per_triangle);
+          s.absorbed_flux += absorbed;
+          s.scattered_flux += scatter_factor * absorbed;
         }
       }
     }
