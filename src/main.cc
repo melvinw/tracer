@@ -34,6 +34,8 @@ struct Stats {
   uint32_t hits;
   uint32_t self_hits;
   uint32_t misses;
+  Scalar absorbed_flux;  // Watts / m^2
+  Scalar scattered_flux; // Watts / m^2
 };
 
 int main(int argc, char **argv) {
@@ -102,11 +104,16 @@ int main(int argc, char **argv) {
   Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
   Scalar d = -bvh::dot(sun_center, sun_norm);
+  constexpr Scalar sun_flux = 500; // W/m^2
+  constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
+  // TODO scatter factor should come from material properties of the underlying
+  // mesh
+  constexpr Scalar scatter_factor = Scalar(1) / Scalar(10);
+  constexpr size_t rays_per_triangle = 1;
   if (debug) {
     std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1]
               << ", " << sun_center[2] << ")" << std::endl;
   }
-
   // First pass to accumulate light on each mesh
   std::vector<Stats> stats(mesh_instances.size());
   for (const auto &[idx, interval] : instance_triangles) {
@@ -122,24 +129,33 @@ int main(int argc, char **argv) {
     for (size_t i = start; i <= end; i++) {
       const auto &t = triangles[i];
 
-      // offset ray origin by scaled down normal to avoid self intersections.
-      auto origin = t.center() + t.n * .000000001;
-      auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
-      bvh::Ray<Scalar> ray(origin, dir, 0.000001, 2.0 * bsphere.radius);
-      bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
-          bvh, triangles.data());
-      bvh::SingleRayTraverser<Bvh> traverser(bvh);
+      for (size_t j = 0; j < rays_per_triangle; j++) {
+        // offset ray origin by scaled down normal to avoid self intersections.
+        // TODO sample ray origins from surface instead of casting from center
+        auto origin = t.center() + t.n * .000000001;
+        auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
+        bvh::Ray<Scalar> ray(origin, dir, 0.000001, 2.0 * bsphere.radius);
+        bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
+            bvh, triangles.data());
+        bvh::SingleRayTraverser<Bvh> traverser(bvh);
 
-      if (auto hit = traverser.traverse(ray, primitive_intersector);
-          hit.has_value()) {
-        auto tidx = hit->primitive_index;
-        if (tidx >= start && tidx <= end) {
-          s.self_hits++;
+        auto hit = traverser.traverse(ray, primitive_intersector);
+        if (hit.has_value()) {
+          auto tidx = hit->primitive_index;
+          if (tidx >= start && tidx <= end) {
+            s.self_hits++;
+          } else {
+            s.hits++;
+          }
         } else {
-          s.hits++;
+          s.misses++;
+          // for details on this math see pp14 of
+          // https://www.sciencedirect.com/science/article/pii/S0304380017304842
+          Scalar flux = sun_flux * glm::abs(bvh::dot(t.n, sun_norm)) /
+                        Scalar(rays_per_triangle);
+          s.absorbed_flux += absorb_factor * flux;
+          s.scattered_flux += scatter_factor * s.absorbed_flux;
         }
-      } else {
-        s.misses++;
       }
     }
   }
@@ -151,9 +167,10 @@ int main(int argc, char **argv) {
     const auto &instance = mesh_instances[i];
     const auto &s = stats[i];
     output[instance.name] = {
-        {"hits", s.hits},
-        {"self_hits", s.self_hits},
-        {"misses", s.misses},
+        {"obstructed_rays", s.hits + s.self_hits},
+        {"unobstructed_rays", s.misses},
+        {"absorbed_flux", s.absorbed_flux},
+        {"scattered_flux", s.scattered_flux},
     };
   }
   std::cout << output.dump(4);
