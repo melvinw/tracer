@@ -52,7 +52,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--instance",
         action="append",
-        help="x,y coordinates at which to place a clone of the source node",
+        help="x,y[,name] of a clone of the source node",
     )
     parser.add_argument(
         "--cell-dimensions",
