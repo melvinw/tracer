@@ -3,7 +3,7 @@
 `tracer` identifies objects in a scene and does path tracing to measure how
 exposed they are to sunlight.
 
-This is more-or-less an implementation of ["A reverse ray-tracing method for modelling the net radiative flux in leaf-resolving plant canopy simulations"](https://doi.org/10.1016/j.ecolmodel.2017.11.022)
+The approach here is heavily influenced by the techniques used in ["A reverse ray-tracing method for modelling the net radiative flux in leaf-resolving plant canopy simulations"](https://doi.org/10.1016/j.ecolmodel.2017.11.022)
 by Brian N. Bailey.
 
 ## Dependencies
