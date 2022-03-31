@@ -137,7 +137,8 @@ int main(int argc, char **argv) {
         // TODO sample ray origins from surface instead of casting from center
         auto origin = t.center() + t.n * .000000001;
         auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
-        bvh::Ray<Scalar> ray(origin, dir, 0.000001, 2.0 * bsphere.radius);
+        bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
+                             2.0 * bsphere.radius);
 
         auto hit = traverser.traverse(ray, primitive_intersector);
         if (hit.has_value()) {
