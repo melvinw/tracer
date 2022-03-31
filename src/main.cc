@@ -174,7 +174,7 @@ int main(int argc, char **argv) {
         {"scattered_flux", s.scattered_flux},
     };
   }
-  std::cout << output.dump(4);
+  std::cout << output.dump(4) << std::endl;
 
   return 0;
 }
