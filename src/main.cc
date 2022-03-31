@@ -115,6 +115,9 @@ int main(int argc, char **argv) {
               << ", " << sun_center[2] << ")" << std::endl;
   }
   // First pass to accumulate light on each mesh
+  bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
+      bvh, triangles.data());
+  bvh::SingleRayTraverser<Bvh> traverser(bvh);
   std::vector<Stats> stats(mesh_instances.size());
   for (const auto &[idx, interval] : instance_triangles) {
     const auto &instance = mesh_instances[idx];
@@ -135,9 +138,6 @@ int main(int argc, char **argv) {
         auto origin = t.center() + t.n * .000000001;
         auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
         bvh::Ray<Scalar> ray(origin, dir, 0.000001, 2.0 * bsphere.radius);
-        bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
-            bvh, triangles.data());
-        bvh::SingleRayTraverser<Bvh> traverser(bvh);
 
         auto hit = traverser.traverse(ray, primitive_intersector);
         if (hit.has_value()) {
