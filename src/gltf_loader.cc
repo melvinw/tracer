@@ -1,9 +1,11 @@
 #include "gltf_loader.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,7 +22,22 @@ std::pair<MeshList, MeshInstances> LoadMeshesFromGLTF(const std::string &path) {
   std::string err;
   std::string warn;
 
-  bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, path.c_str());
+  bool ret;
+  if (path == "-") {
+    const char *gltf_path = getenv("GLTF_PATH");
+    std::string base_dir(gltf_path == nullptr ? getenv("HOME") : gltf_path);
+
+    std::stringbuf buf;
+    std::ostream os(&buf);
+    for (std::string s; std::getline(std::cin, s);) {
+      os << s;
+    }
+    std::string in(buf.str());
+    ret = loader.LoadASCIIFromString(&model, &err, &warn, in.c_str(), in.size(),
+                                     base_dir);
+  } else {
+    ret = loader.LoadASCIIFromFile(&model, &err, &warn, path.c_str());
+  }
   if (!warn.empty()) {
     std::cerr << "warning: " << warn;
   }
