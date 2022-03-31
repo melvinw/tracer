@@ -78,6 +78,7 @@ std::pair<MeshList, MeshInstances> LoadMeshesFromGLTF(const std::string &path) {
       // TODO: support more than just triangles
       assert(prim.mode == TINYGLTF_MODE_TRIANGLES);
 
+      auto &mesh = meshes[midx];
       auto &vertices = meshes[midx].vertices;
       {
         const auto pidx = prim.attributes.at("POSITION");
@@ -95,6 +96,14 @@ std::pair<MeshList, MeshInstances> LoadMeshesFromGLTF(const std::string &path) {
         for (size_t i = 0; i < accessor.count; i++) {
           vertices[i].position = glm::vec4(
               reinterpret_cast<const glm::vec3 *>(&data[i * stride])[0], 1);
+        }
+        if (accessor.minValues.size() == 3) {
+          mesh.min = glm::vec3(accessor.minValues[0], accessor.minValues[1],
+                               accessor.minValues[2]);
+        }
+        if (accessor.maxValues.size() == 3) {
+          mesh.max = glm::vec3(accessor.maxValues[0], accessor.maxValues[1],
+                               accessor.maxValues[2]);
         }
       }
 
@@ -117,7 +126,7 @@ std::pair<MeshList, MeshInstances> LoadMeshesFromGLTF(const std::string &path) {
         }
       }
 
-      auto &indices = meshes[midx].indices;
+      auto &indices = mesh.indices;
       {
         const tinygltf::Accessor &accessor = model.accessors[prim.indices];
         const tinygltf::BufferView &bufferView =

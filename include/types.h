@@ -16,6 +16,8 @@ struct Vertex {
 struct Mesh {
   std::vector<Vertex> vertices;
   std::vector<size_t> indices;
+  glm::vec3 min;
+  glm::vec3 max;
 };
 
 struct MeshInstance {
