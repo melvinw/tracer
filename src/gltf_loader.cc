@@ -49,8 +49,9 @@ std::pair<MeshList, MeshInstances> LoadMeshesFromGLTF(const std::string &path) {
     assert(false);
   }
 
-  assert(model.scenes.size() == 1);
-  const auto &scene = model.scenes[0];
+  assert(model.defaultScene >= 0);
+  assert(model.scenes.size() >= static_cast<size_t>(model.defaultScene));
+  const auto &scene = model.scenes[model.defaultScene];
   std::map<size_t, std::set<size_t>> mesh_nodes;
   std::vector<size_t> front;
   for (const int nidx : scene.nodes) {
