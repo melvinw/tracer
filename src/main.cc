@@ -1,12 +1,12 @@
 #include <cassert>
 #include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
-#include<math.h>
-#include<time.h>
+
 #include <bvh/bounding_box.hpp>
 #include <bvh/bvh.hpp>
 #include <bvh/heuristic_primitive_splitter.hpp>
@@ -19,12 +19,13 @@
 #include <bvh/sweep_sah_builder.hpp>
 #include <bvh/triangle.hpp>
 #include <bvh/vector.hpp>
+#include <glm/gtx/rotate_vector.hpp>
 #include <json.hpp>
 
 #include "gltf_loader.h"
+#include "gpl/solar_position.h"
 #include "types.h"
 
-#include <glm/gtx/rotate_vector.hpp>
 using Scalar = double;
 using Vec3 = bvh::Vector3<Scalar>;
 using Triangle = bvh::Triangle<Scalar>;
@@ -40,118 +41,42 @@ struct Stats {
   Scalar scattered_flux; // Watts / m^2
 };
 
-//Taken from Helios
-unsigned int julianDay(struct tm time_struct){
-  unsigned int day = time_struct.tm_mday;
-  unsigned int month = time_struct.tm_mon + 1; //Code below assumes months from 1-12 
-  unsigned int year = time_struct.tm_year+1900; //Time struct contains years relative to the year 1900
-  int skips_leap[] = {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335};
-  int skips_nonleap[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
-  int* skips;
-  
-  if( (year-2000)%4 == 0 ){  //leap year
-    skips=skips_leap;
-  }else{                 //non-leap year
-    skips=skips_nonleap;
-  }
-  
-  return skips[month-1]+day;
-}
-
-double acos_safe( double x ){
-  if (x < -1.0) x = -1.0 ;
-  else if (x > 1.0) x = 1.0 ;
-  return acosf(x) ;
-}
-
-double asin_safe( double x ){
-  if (x < -1.0) x = -1.0 ;
-  else if (x > 1.0) x = 1.0 ;
-  return asinf(x) ;
-}
-//Returns the Zenith angle of the sun. Assumes phi = 0 for now
-//From https://github.com/PlantSimulationLab/Helios/blob/master/plugins/solarposition/src/SolarPosition.cpp
-double sunAngle(double latitude, double longitude, int UTC, struct tm time_struct){
-  unsigned int jd = julianDay(time_struct);
-
-  double rad=M_PI/180.f;
-  double Gamma = 2.f*M_PI*(float(jd-1))/365.f;  
-  //solar declination angle (Iqbal Eq. 1.3.1 after Spencer)
-  double delta = 0.006918f - 0.399912f*cos(Gamma) + 0.070257f*sin(Gamma) 
-    - 0.006758f*cos(2.f*Gamma) + 0.000907f*sin(2.f*Gamma) 
-    - 0.002697f*cos(3.f*Gamma) + 0.00148f*sin(3.f*Gamma);
-  double EoT = 229.18f*(0.000075f + 0.001868f*cos(Gamma) - 0.032077f*sin(Gamma)
-		 - 0.014615f*cos(2.f*Gamma) - 0.04089f*sin(2.f*Gamma));
-  double time_dec=time_struct.tm_hour+time_struct.tm_min/60.f;  //(hours) 
-
-  int LSTM=15.f*float(UTC); //degrees
-
-  double TC=4.f*(LSTM-longitude)+EoT; //minutes
-  double LST=time_dec+TC/60.f; //hours
-
-  double h=(LST-12.f)*15.f*rad; //hour angle (rad)
-    
-  //solar zenith angle
-  double theta = asin_safe( sin(latitude*rad)*sin(delta) + cos(latitude*rad)*cos(delta)*cos(h) ); //(rad)
-
-  assert( theta>-0.5f*M_PI && theta<0.5f*M_PI );
-
-  //solar elevation angle
-  double phi = acos_safe( (sin(delta) - sin(theta)*sin(latitude*rad))/(cos(theta)*cos(latitude*rad)));
-
-  if( LST>12.f ){
-    phi=2.f*M_PI-phi;
-  }
-
-  assert( phi>0 && phi<2.f*M_PI );
-
-  return (90 * rad) - theta; //Ignoring phi for now. 90 - theta to return zenith angle
-  
-}
-
-void sunAngleTest(){
-  //Test taken from Helios
-  double test_latitude = 40.1250;
-  double test_longitude = 105.2369;
-  struct tm* test_tm;
-  time_t test_time;
-  time(&test_time);
-  test_tm = localtime(&test_time);
-  test_tm->tm_mday = 1;
-  test_tm->tm_mon = 0;
-  test_tm->tm_year = 100;
-  test_tm->tm_hour = 10;
-  test_tm->tm_min = 30;
-  test_tm->tm_sec = 0;
-  int UTC = 7;
-  std::cout << "Azimuthal angle for 10AM in CO time zone is: " << sunAngle(test_latitude, test_longitude, UTC, *test_tm) << std::endl;
-}
 int main(int argc, char **argv) {
   // TODO: use a real logging library
   bool debug = getenv("DEBUG") != nullptr;
-  
 
-  sunAngleTest();
-  
-  
   assert(argc >= 2);
   std::string gltf_path(argv[1]);
-  double latitude = std::stof(argv[2]);
-  double longitude = std::stof(argv[3]);
-  int UTC = std::stoi(argv[4]);
-  struct tm time_value;
-  char* err = strptime(argv[5], "%Y-%m-%d %H:%M:%S", &time_value);
-  if(err == NULL || *err != '\0'){
-    std::cerr << "Error in parsing time " << argv[5] << std::endl;
+
+  double latitude = 0.0f;
+  double longitude = 0.0f;
+  if (argc >= 3) {
+    latitude = std::stof(argv[2]);
+    longitude = std::stof(argv[3]);
   }
+
+  struct tm tv = {};
+  struct tm tv2 = {};
+  int tz = 0;
+  if (argc == 5) {
+    char *end = strptime(argv[4], "%Y-%m-%dT%H:%M:%S", &tv);
+    if (end == nullptr) {
+      std::cerr << "Error in parsing time " << argv[5] << std::endl;
+      assert(false);
+    }
+    if (*end == '-' || *end == '+') {
+      end = strptime(end + 1, "%H:%M", &tv2);
+      assert(end != nullptr);
+      tz = (*end == '-') ? -tv2.tm_hour : tv2.tm_hour;
+    }
+  } else {
+    tv.tm_hour = 12;
+  }
+
   if (debug) {
-    const int buf_sz = 1024;
-    char buf[buf_sz];
-    strftime(buf, buf_sz, "%c", &time_value);
-    std::cerr << "Time is: " << buf << std::endl;
     std::cerr << "loading " << gltf_path << std::endl;
   }
-  
+
   auto [meshes, mesh_instances] = LoadMeshesFromGLTF(gltf_path);
 
   std::vector<Triangle> triangles;
@@ -207,8 +132,9 @@ int main(int argc, char **argv) {
 
   // TODO: Sun is fixed at high noon right now. Make this configurable.
   Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
-  float zenith_angle = sunAngle(latitude, longitude, UTC, time_value);
-  glm::vec3 sun_center_glm = glm::rotateY(glm::vec3(sun_center[0], sun_center[1], sun_center[2]), zenith_angle);
+  float zenith_angle = sunAngle(latitude, longitude, tz, tv);
+  glm::vec3 sun_center_glm = glm::rotateY(
+      glm::vec3(sun_center[0], sun_center[1], sun_center[2]), zenith_angle);
   sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
   Scalar d = -bvh::dot(sun_center, sun_norm);

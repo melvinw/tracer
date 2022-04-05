@@ -31,7 +31,7 @@ tinygltf = build_target(
 
 executable(
   'tracer',
-  ['src/main.cc', 'src/gltf_loader.cc'],
+  ['src/main.cc', 'src/gltf_loader.cc', 'src/gpl/solar_position.cc'],
   include_directories: inc_dirs,
   link_with: [tinygltf,],
   dependencies: [glm_dep, omp_dep],
