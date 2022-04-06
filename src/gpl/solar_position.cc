@@ -14,17 +14,17 @@
 static unsigned int julianDay(struct tm time_struct) {
   unsigned int day = time_struct.tm_mday;
   unsigned int month =
-      time_struct.tm_mon + 1; // Code below assumes months from 1-12
+      time_struct.tm_mon + 1;  // Code below assumes months from 1-12
   unsigned int year =
       time_struct.tm_year +
-      1900; // Time struct contains years relative to the year 1900
+      1900;  // Time struct contains years relative to the year 1900
   int skips_leap[] = {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335};
   int skips_nonleap[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
   int *skips;
 
-  if ((year - 2000) % 4 == 0) { // leap year
+  if ((year - 2000) % 4 == 0) {  // leap year
     skips = skips_leap;
-  } else { // non-leap year
+  } else {  // non-leap year
     skips = skips_nonleap;
   }
 
@@ -60,18 +60,18 @@ double sunAngle(double latitude, double longitude, int UTC,
   double EoT =
       229.18f * (0.000075f + 0.001868f * cos(Gamma) - 0.032077f * sin(Gamma) -
                  0.014615f * cos(2.f * Gamma) - 0.04089f * sin(2.f * Gamma));
-  double time_dec = time_struct.tm_hour + time_struct.tm_min / 60.f; //(hours)
+  double time_dec = time_struct.tm_hour + time_struct.tm_min / 60.f;  //(hours)
 
-  int LSTM = 15.f * float(UTC); // degrees
+  int LSTM = 15.f * float(UTC);  // degrees
 
-  double TC = 4.f * (LSTM - longitude) + EoT; // minutes
-  double LST = time_dec + TC / 60.f;          // hours
+  double TC = 4.f * (LSTM - longitude) + EoT;  // minutes
+  double LST = time_dec + TC / 60.f;           // hours
 
-  double h = (LST - 12.f) * 15.f * rad; // hour angle (rad)
+  double h = (LST - 12.f) * 15.f * rad;  // hour angle (rad)
 
   // solar zenith angle
   double theta = asin_safe(sin(latitude * rad) * sin(delta) +
-                           cos(latitude * rad) * cos(delta) * cos(h)); //(rad)
+                           cos(latitude * rad) * cos(delta) * cos(h));  //(rad)
 
   assert(theta > -0.5f * M_PI && theta < 0.5f * M_PI);
 
@@ -86,5 +86,5 @@ double sunAngle(double latitude, double longitude, int UTC,
   assert(phi > 0 && phi < 2.f * M_PI);
 
   return (90 * rad) -
-         theta; // Ignoring phi for now. 90 - theta to return zenith angle
+         theta;  // Ignoring phi for now. 90 - theta to return zenith angle
 }

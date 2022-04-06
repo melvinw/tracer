@@ -15,4 +15,4 @@
 double sunAngle(double latitude, double longitude, int UTC,
                 struct tm time_struct);
 
-#endif // GPL_SOLAR_POSITION_H_
+#endif  // GPL_SOLAR_POSITION_H_
