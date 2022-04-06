@@ -200,10 +200,7 @@ std::pair<MeshList, MeshInstances> LoadMeshesFromGLTF(const std::string &path) {
         trs = glm::scale(trs, scale);
       }
       instances.push_back(MeshInstance{
-        name : node.name,
-        mesh_index : midx,
-        model_matrix : trs
-      });
+          .name = node.name, .mesh_index = midx, .model_matrix = trs});
     }
   }
 
