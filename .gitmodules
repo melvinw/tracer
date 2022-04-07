@@ -4,3 +4,6 @@
 [submodule "thirdparty/tinygltf"]
 	path = thirdparty/tinygltf
 	url = https://github.com/syoyo/tinygltf.git
+[submodule "thirdparty/CLI11"]
+	path = thirdparty/CLI11
+	url = git@github.com:CLIUtils/CLI11.git
