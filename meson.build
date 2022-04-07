@@ -3,7 +3,8 @@ project('tracer', 'cpp')
 inc_dirs = [
 	include_directories(
 		'thirdparty/bvh/include',
-		'thirdparty/tinygltf'
+		'thirdparty/tinygltf',
+    'thirdparty/CLI11/include/'
 	),
 	include_directories(
 		'include',

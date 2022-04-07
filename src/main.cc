@@ -25,6 +25,7 @@
 #include "gltf_loader.h"
 #include "gpl/solar_position.h"
 #include "types.h"
+#include<CLI/CLI.hpp>
 
 using Scalar = double;
 using Vec3 = bvh::Vector3<Scalar>;
@@ -41,36 +42,46 @@ struct Stats {
   Scalar scattered_flux; // Watts / m^2
 };
 
+int parse_time(std::string& time_string, struct tm& tv, int& tz){
+  char *end = strptime(time_string.c_str(), "%Y-%m-%dT%H:%M:%S", &tv);
+  struct tm tv2;
+  if (end == nullptr) {
+    std::cerr << "Error in parsing time " << time_string << std::endl;
+    return -1;
+  }
+  if (*end == '-' || *end == '+') {
+    end = strptime(end + 1, "%H:%M", &tv2);
+    assert(end != nullptr);
+    tz = (*end == '-') ? -tv2.tm_hour : tv2.tm_hour;
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
   // TODO: use a real logging library
+  CLI::App app{"Tracer"};
   bool debug = getenv("DEBUG") != nullptr;
 
-  assert(argc >= 2);
-  std::string gltf_path(argv[1]);
+  std::string gltf_path = "";
 
   double latitude = 0.0f;
   double longitude = 0.0f;
-  if (argc >= 3) {
-    latitude = std::stof(argv[2]);
-    longitude = std::stof(argv[3]);
-  }
+  std::string time_string = "";
+  struct tm tv;
+  tv.tm_hour = 12;
+  app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
+  app.add_option("--lat", latitude, "Latitude")->required();
+  app.add_option("--long", longitude, "Longitude")->required();
+  CLI::Option* time_option = app.add_option("--time", time_string, "Time of day");
 
-  struct tm tv = {};
-  struct tm tv2 = {};
+  CLI11_PARSE(app, argc, argv);
+  
+  
+  
   int tz = 0;
-  if (argc == 5) {
-    char *end = strptime(argv[4], "%Y-%m-%dT%H:%M:%S", &tv);
-    if (end == nullptr) {
-      std::cerr << "Error in parsing time " << argv[5] << std::endl;
-      assert(false);
-    }
-    if (*end == '-' || *end == '+') {
-      end = strptime(end + 1, "%H:%M", &tv2);
-      assert(end != nullptr);
-      tz = (*end == '-') ? -tv2.tm_hour : tv2.tm_hour;
-    }
-  } else {
-    tv.tm_hour = 12;
+  if(time_option->count() > 0){
+      int err = parse_time(time_string, tv, tz);
+      assert(err==0);
   }
 
   if (debug) {
