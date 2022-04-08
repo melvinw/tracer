@@ -3,6 +3,7 @@
 #include <ctime>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,13 +20,14 @@
 #include <bvh/sweep_sah_builder.hpp>
 #include <bvh/triangle.hpp>
 #include <bvh/vector.hpp>
+#include <CLI/CLI.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 #include <json.hpp>
 
 #include "gltf_loader.h"
 #include "gpl/solar_position.h"
 #include "types.h"
-#include<CLI/CLI.hpp>
+
 
 using Scalar = double;
 using Vec3 = bvh::Vector3<Scalar>;
@@ -42,19 +44,21 @@ struct Stats {
   Scalar scattered_flux; // Watts / m^2
 };
 
-int parse_time(std::string& time_string, struct tm& tv, int& tz){
+std::optional<std::pair<struct tm, int>> parse_time(const std::string &time_string) {
+  int tz;
+  struct tm tv;
   char *end = strptime(time_string.c_str(), "%Y-%m-%dT%H:%M:%S", &tv);
   struct tm tv2;
   if (end == nullptr) {
     std::cerr << "Error in parsing time " << time_string << std::endl;
-    return -1;
+    return std::nullopt;
   }
   if (*end == '-' || *end == '+') {
     end = strptime(end + 1, "%H:%M", &tv2);
     assert(end != nullptr);
     tz = (*end == '-') ? -tv2.tm_hour : tv2.tm_hour;
   }
-  return 0;
+  return std::make_pair(tv, tz);
 }
 
 int main(int argc, char **argv) {
@@ -62,26 +66,25 @@ int main(int argc, char **argv) {
   CLI::App app{"Tracer"};
   bool debug = getenv("DEBUG") != nullptr;
 
-  std::string gltf_path = "";
+  std::string gltf_path;
 
   double latitude = 0.0f;
   double longitude = 0.0f;
-  std::string time_string = "";
-  struct tm tv;
-  tv.tm_hour = 12;
+  std::string time_string;
   app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
   app.add_option("--lat", latitude, "Latitude")->required();
   app.add_option("--long", longitude, "Longitude")->required();
-  CLI::Option* time_option = app.add_option("--time", time_string, "Time of day");
-
+  CLI::Option* time_option = app.add_option("--time", time_string, "Time of day - should be in %Y-%m-%dT%H:%M%:S[-/+%H:%M] format");
   CLI11_PARSE(app, argc, argv);
-  
-  
-  
+  struct tm tv;
+  tv.tm_hour = 12;
   int tz = 0;
   if(time_option->count() > 0){
-      int err = parse_time(time_string, tv, tz);
-      assert(err==0);
+      auto time = parse_time(time_string);
+      assert(time.has_value());
+      auto [res_tv, res_tz] = time.value();
+      tv = res_tv;
+      tz = res_tz;
   }
 
   if (debug) {
