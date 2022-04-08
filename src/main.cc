@@ -1,13 +1,15 @@
+#include <atomic>
 #include <cassert>
-#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <map>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
+#include <CLI/CLI.hpp>
 #include <bvh/bounding_box.hpp>
 #include <bvh/bvh.hpp>
 #include <bvh/heuristic_primitive_splitter.hpp>
@@ -23,6 +25,7 @@
 #include <CLI/CLI.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 #include <json.hpp>
+#include <thread_pool.hpp>
 
 #include "gltf_loader.h"
 #include "gpl/solar_position.h"
@@ -37,22 +40,91 @@ using BoundingBox = bvh::BoundingBox<Scalar>;
 using Sphere = bvh::Sphere<Scalar>;
 
 struct Stats {
-  uint32_t hits;
-  uint32_t self_hits;
-  uint32_t misses;
-  Scalar absorbed_flux;  // Watts / m^2
-  Scalar scattered_flux; // Watts / m^2
+  Stats()
+      : hits(0),
+        misses(0),
+        absorbed_flux(Scalar(0.0f)),
+        scattered_flux(Scalar(0.0f)) {}
+
+  Stats(const Stats &other)
+      : hits(other.hits.load()),
+        misses(other.misses.load()),
+        absorbed_flux(other.absorbed_flux.load()),
+        scattered_flux(other.absorbed_flux.load()) {}
+
+  Stats(Stats &&other)
+      : hits(other.hits.load()),
+        misses(other.misses.load()),
+        absorbed_flux(other.absorbed_flux.load()),
+        scattered_flux(other.absorbed_flux.load()) {}
+
+  void Merge(const Stats &s) {
+    hits = hits.load() + s.hits.load();
+    misses = misses.load() + s.misses.load();
+    absorbed_flux = absorbed_flux.load() + s.absorbed_flux.load();
+    scattered_flux = scattered_flux.load() + s.scattered_flux.load();
+  }
+
+  std::atomic<uint32_t> hits;
+  std::atomic<uint32_t> misses;
+  std::atomic<Scalar> absorbed_flux;   // Watts / m^2
+  std::atomic<Scalar> scattered_flux;  // Watts / m^2
 };
 
-std::optional<std::pair<struct tm, int>> parse_time(const std::string &time_string) {
+struct AnnotatedTriangle {
+  struct Intersection {
+    Scalar t;
+
+    // Required member: returns the distance along the ray
+    Scalar distance() const { return t; }
+  };
+
+  using ScalarType = Scalar;
+  using IntersectionType = Intersection;
+
+  AnnotatedTriangle() = default;
+  AnnotatedTriangle(size_t idx, const Triangle &t)
+      : mesh_idx(idx), triangle(t), stats(){};
+
+  Vec3 center() const { return triangle.center(); }
+
+  BoundingBox bounding_box() const { return triangle.bounding_box(); }
+
+  std::optional<Intersection> intersect(const bvh::Ray<Scalar> &ray) const {
+    if (auto ret = triangle.intersect(ray); ret.has_value()) {
+      return Intersection{.t = ret.value().t};
+    }
+    return std::nullopt;
+  }
+
+  size_t mesh_idx;
+  Triangle triangle;
+  Stats stats;
+};
+
+// TODO: move this to types.h
+struct Plane {
+  Plane() : a(), b(), c(), d() {}
+
+  // normal is assumed to be unit lenght.
+  Plane(const Vec3 &point, const Vec3 &normal)
+      : a(normal[0]), b(normal[1]), c(normal[2]), d(-bvh::dot(point, normal)) {}
+
+  Vec3 ProjectPoint(const Vec3 &point) {
+    Vec3 normal(a, b, c);
+    Scalar signed_dist = bvh::dot(normal, point) + d;
+    return point - normal * signed_dist;
+  }
+
+  double a, b, c, d;
+};
+
+static std::pair<struct tm, int> parse_time(const std::string &time_string) {
   int tz;
   struct tm tv;
   char *end = strptime(time_string.c_str(), "%Y-%m-%dT%H:%M:%S", &tv);
   struct tm tv2;
-  if (end == nullptr) {
-    std::cerr << "Error in parsing time " << time_string << std::endl;
-    return std::nullopt;
-  }
+  assert(end != nullptr);
   if (*end == '-' || *end == '+') {
     end = strptime(end + 1, "%H:%M", &tv2);
     assert(end != nullptr);
@@ -64,25 +136,44 @@ std::optional<std::pair<struct tm, int>> parse_time(const std::string &time_stri
 int main(int argc, char **argv) {
   // TODO: use a real logging library
   CLI::App app{"Tracer"};
-  bool debug = getenv("DEBUG") != nullptr;
 
   std::string gltf_path;
+  app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
 
   double latitude = 0.0f;
   double longitude = 0.0f;
-  std::string time_string;
-  app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
   app.add_option("--lat", latitude, "Latitude")->required();
   app.add_option("--long", longitude, "Longitude")->required();
-  CLI::Option* time_option = app.add_option("--time", time_string, "Time of day - should be in %Y-%m-%dT%H:%M%:S[-/+%H:%M] format");
+
+  size_t rays_per_triangle = 0;
+  app.add_option("--rays-per-triangle", rays_per_triangle,
+                 "Number of rays to cast from each triangle in the mesh")
+      ->default_val(1);
+  assert(rays_per_triangle != 0);
+
+  unsigned int num_workers = 1;
+  app.add_option("--num-workers", num_workers,
+                 "Number of workers to use when casting rays.")
+      ->default_val(std::thread::hardware_concurrency());
+  assert(num_workers != 0);
+
+  std::string time_string;
+  CLI::Option *time_option = app.add_option(
+      "--time", time_string,
+      "Time of day - should be in %Y-%m-%dT%H:%M%:S[-/+%H:%M] format");
+
+  bool debug = false;
+  app.add_flag("--verbose", debug, "Be verbose.");
+
   CLI11_PARSE(app, argc, argv);
-  struct tm tv;
+
+  struct tm tv = {};
+  tv.tm_mon = 1;
+  tv.tm_mday = 1;
   tv.tm_hour = 12;
   int tz = 0;
-  if(time_option->count() > 0){
-      auto time = parse_time(time_string);
-      assert(time.has_value());
-      std::tie(tv, tz) = time.value();
+  if (time_option->count() > 0) {
+    std::tie(tv, tz) = parse_time(time_string);
   }
 
   if (debug) {
@@ -91,12 +182,10 @@ int main(int argc, char **argv) {
 
   auto [meshes, mesh_instances] = LoadMeshesFromGLTF(gltf_path);
 
-  std::vector<Triangle> triangles;
-  std::map<int, std::pair<size_t, size_t>> instance_triangles;
+  std::vector<AnnotatedTriangle> triangles;
   for (size_t idx = 0; idx < mesh_instances.size(); idx++) {
     const auto &instance = mesh_instances[idx];
     const auto &mesh = meshes[instance.mesh_index];
-    size_t start = triangles.size();
     for (size_t i = 0; i < mesh.indices.size(); i += 3) {
       glm::vec4 v0 = mesh.vertices[mesh.indices[i]].position;
       glm::vec4 v1 = mesh.vertices[mesh.indices[i + 1]].position;
@@ -106,12 +195,11 @@ int main(int argc, char **argv) {
         v1 = instance.model_matrix.value() * v1;
         v2 = instance.model_matrix.value() * v2;
       }
-      triangles.push_back(Triangle(Vec3(v0.x, v0.y, v0.z),
-                                   Vec3(v1.x, v1.y, v1.z),
-                                   Vec3(v2.x, v2.y, v2.z)));
+      AnnotatedTriangle t(
+          idx, Triangle(Vec3(v0.x, v0.y, v0.z), Vec3(v1.x, v1.y, v1.z),
+                        Vec3(v2.x, v2.y, v2.z)));
+      triangles.emplace_back(std::move(t));
     }
-    size_t end = triangles.size() - 1;
-    instance_triangles[idx] = {start, end};
   }
 
   if (debug) {
@@ -142,84 +230,90 @@ int main(int argc, char **argv) {
               << ") w/ radius " << bsphere.radius << std::endl;
   }
 
-  // TODO: Sun is fixed at high noon right now. Make this configurable.
   Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
   float zenith_angle = sunAngle(latitude, longitude, tz, tv);
   glm::vec3 sun_center_glm = glm::rotateY(
       glm::vec3(sun_center[0], sun_center[1], sun_center[2]), zenith_angle);
   sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
-  Scalar d = -bvh::dot(sun_center, sun_norm);
-  Scalar sun_flux = 500 * std::cos(zenith_angle); // W/m^2
-  constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
+  Plane sun_plane(sun_center, sun_norm);
+  Scalar sun_flux = 1362 / std::cos(zenith_angle);  // W/m^2
+
   // TODO scatter factor should come from material properties of the underlying
   // mesh
   constexpr Scalar scatter_factor = Scalar(1) / Scalar(10);
-  constexpr size_t rays_per_triangle = 1;
+  constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
+
   if (debug) {
     std::cerr << "Zenith angle is: " << zenith_angle << std::endl;
     std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1]
               << ", " << sun_center[2] << ")" << std::endl;
   }
+
+  thread_pool tpool(num_workers);
+
   // First pass to accumulate light on each mesh
-  bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
+  bvh::AnyPrimitiveIntersector<Bvh, AnnotatedTriangle> intersector(
       bvh, triangles.data());
   bvh::SingleRayTraverser<Bvh> traverser(bvh);
-  std::vector<Stats> stats(mesh_instances.size());
-  for (const auto &[idx, interval] : instance_triangles) {
-    const auto &instance = mesh_instances[idx];
-    const auto [start, end] = interval;
-    if (debug) {
-      std::cerr << "launching " << end - start + 1 << " rays from "
-                << instance.name << "(" << start << ", " << end << ")"
-                << std::endl;
-    }
+  tpool.parallelize_loop(
+      0ull, triangles.size(), [&](const size_t &lo, const size_t &hi) {
+        for (size_t i = lo; i < hi; i++) {
+          auto &t = triangles[i];
 
-    Stats &s = stats[idx];
-    for (size_t i = start; i <= end; i++) {
-      const auto &t = triangles[i];
+          for (size_t j = 0; j < rays_per_triangle; j++) {
+            // offset ray origin by scaled down normal to avoid self
+            // intersections.
+            // TODO sample ray origins from surface instead of casting from
+            // center
+            auto origin = t.triangle.center() + t.triangle.n * .000000001;
+            auto dir = origin - sun_plane.ProjectPoint(origin);
+            bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
+                                 2.0 * bsphere.radius);
 
-      for (size_t j = 0; j < rays_per_triangle; j++) {
-        // offset ray origin by scaled down normal to avoid self intersections.
-        // TODO sample ray origins from surface instead of casting from center
-        auto origin = t.center() + t.n * .000000001;
-        auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
-        bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
-                             2.0 * bsphere.radius);
-
-        auto hit = traverser.traverse(ray, primitive_intersector);
-        if (hit.has_value()) {
-          auto tidx = hit->primitive_index;
-          if (tidx >= start && tidx <= end) {
-            s.self_hits++;
-          } else {
-            s.hits++;
+            auto hit = traverser.traverse(ray, intersector);
+            if (hit.has_value()) {
+              t.stats.hits++;
+            } else {
+              t.stats.misses++;
+              // for details on this math see pp14 of
+              // https://www.sciencedirect.com/science/article/pii/S0304380017304842
+              Scalar absorbed = absorb_factor * sun_flux *
+                                glm::abs(bvh::dot(t.triangle.n, sun_norm)) /
+                                Scalar(rays_per_triangle);
+              // C++17 doesn't have the std::atomic specializations for
+              // floating point types yet, so we just repeatedly CAS here
+              // until we succeed.
+              for (Scalar af = t.stats.absorbed_flux;
+                   !t.stats.absorbed_flux.compare_exchange_strong(
+                       af, af + absorbed);) {
+                ;
+              }
+              for (Scalar sf = t.stats.scattered_flux;
+                   !t.stats.scattered_flux.compare_exchange_strong(
+                       sf, sf + scatter_factor * absorbed);) {
+                ;
+              }
+            }
           }
-        } else {
-          s.misses++;
-          // for details on this math see pp14 of
-          // https://www.sciencedirect.com/science/article/pii/S0304380017304842
-          Scalar absorbed = absorb_factor * sun_flux *
-                            glm::abs(bvh::dot(t.n, sun_norm)) /
-                            Scalar(rays_per_triangle);
-          s.absorbed_flux += absorbed;
-          s.scattered_flux += scatter_factor * absorbed;
         }
-      }
-    }
-  }
+      });
 
   // TODO: Second pass to scatter some portion of light form each surface
 
   nlohmann::json output;
+  std::vector<Stats> stats(mesh_instances.size());
+  for (const auto &t : triangles) {
+    stats[t.mesh_idx].Merge(t.stats);
+  }
   for (size_t i = 0; i < mesh_instances.size(); i++) {
     const auto &instance = mesh_instances[i];
     const auto &s = stats[i];
     output[instance.name] = {
-        {"obstructed_rays", s.hits + s.self_hits},
-        {"unobstructed_rays", s.misses},
-        {"absorbed_flux", s.absorbed_flux},
-        {"scattered_flux", s.scattered_flux},
+        {"obstructed_rays", s.hits.load()},
+        {"unobstructed_rays", s.misses.load()},
+        {"absorbed_flux", s.absorbed_flux.load()},
+        {"scattered_flux", s.scattered_flux.load()},
     };
   }
   std::cout << output.dump(4) << std::endl;

@@ -2,9 +2,10 @@ project('tracer', 'cpp')
 
 inc_dirs = [
 	include_directories(
+    'thirdparty/CLI11/include/',
 		'thirdparty/bvh/include',
+		'thirdparty/thread-pool',
 		'thirdparty/tinygltf',
-    'thirdparty/CLI11/include/'
 	),
 	include_directories(
 		'include',
@@ -22,6 +23,7 @@ cxx_flags = [
 
 omp_dep = dependency('openmp', required: false)
 glm_dep = dependency('glm', required: true)
+threads_dep = dependency('threads', required: true)
 
 tinygltf = build_target(
   'tinygltf',
@@ -35,6 +37,6 @@ executable(
   ['src/main.cc', 'src/gltf_loader.cc', 'src/gpl/solar_position.cc'],
   include_directories: inc_dirs,
   link_with: [tinygltf,],
-  dependencies: [glm_dep, omp_dep],
+  dependencies: [glm_dep, omp_dep, threads_dep],
   cpp_args: cxx_flags
 )
