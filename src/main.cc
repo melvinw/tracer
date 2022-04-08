@@ -82,9 +82,7 @@ int main(int argc, char **argv) {
   if(time_option->count() > 0){
       auto time = parse_time(time_string);
       assert(time.has_value());
-      auto [res_tv, res_tz] = time.value();
-      tv = res_tv;
-      tz = res_tz;
+      std::tie(tv, tz) = time.value();
   }
 
   if (debug) {
