@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cassert>
 #include <cstdlib>
 #include <ctime>
@@ -5,6 +6,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -23,6 +25,7 @@
 #include <bvh/vector.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 #include <json.hpp>
+#include <thread_pool.hpp>
 
 #include "gltf_loader.h"
 #include "gpl/solar_position.h"
@@ -36,11 +39,16 @@ using BoundingBox = bvh::BoundingBox<Scalar>;
 using Sphere = bvh::Sphere<Scalar>;
 
 struct Stats {
-  uint32_t hits;
-  uint32_t self_hits;
-  uint32_t misses;
-  Scalar absorbed_flux;   // Watts / m^2
-  Scalar scattered_flux;  // Watts / m^2
+  Stats()
+      : hits(0),
+        self_hits(0),
+        absorbed_flux(Scalar(0.0f)),
+        scattered_flux(Scalar(0.0f)) {}
+  std::atomic<uint32_t> hits;
+  std::atomic<uint32_t> self_hits;
+  std::atomic<uint32_t> misses;
+  std::atomic<Scalar> absorbed_flux;   // Watts / m^2
+  std::atomic<Scalar> scattered_flux;  // Watts / m^2
 };
 
 std::optional<std::pair<struct tm, int>> parse_time(
@@ -79,6 +87,12 @@ int main(int argc, char **argv) {
                  "Number of rays to cast from each triangle in the mesh")
       ->default_val(1);
   assert(rays_per_triangle != 0);
+
+  unsigned int num_workers = 1;
+  app.add_option("--num-workers", num_workers,
+                 "Number of workers to use when casting rays.")
+      ->default_val(std::thread::hardware_concurrency());
+  assert(num_workers != 0);
 
   std::string time_string;
   CLI::Option *time_option = app.add_option(
@@ -171,6 +185,9 @@ int main(int argc, char **argv) {
     std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1]
               << ", " << sun_center[2] << ")" << std::endl;
   }
+
+  thread_pool tpool(num_workers);
+
   // First pass to accumulate light on each mesh
   bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
       bvh, triangles.data());
@@ -186,37 +203,61 @@ int main(int argc, char **argv) {
     }
 
     Stats &s = stats[idx];
-    for (size_t i = start; i <= end; i++) {
-      const auto &t = triangles[i];
+    tpool.parallelize_loop(
+        start, end + 1, [&](const size_t &tlo, const size_t &thi) {
+          for (size_t i = tlo; i < thi; i++) {
+            const auto &t = triangles[i];
 
-      for (size_t j = 0; j < rays_per_triangle; j++) {
-        // offset ray origin by scaled down normal to avoid self intersections.
-        // TODO sample ray origins from surface instead of casting from center
-        auto origin = t.center() + t.n * .000000001;
-        auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
-        bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
-                             2.0 * bsphere.radius);
+            for (size_t j = 0; j < rays_per_triangle; j++) {
+              // offset ray origin by scaled down normal to avoid self
+              // intersections.
+              // TODO sample ray origins from surface instead of casting from
+              // center
+              auto origin = t.center() + t.n * .000000001;
+              auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
+              bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
+                                   2.0 * bsphere.radius);
 
-        auto hit = traverser.traverse(ray, primitive_intersector);
-        if (hit.has_value()) {
-          auto tidx = hit->primitive_index;
-          if (tidx >= start && tidx <= end) {
-            s.self_hits++;
-          } else {
-            s.hits++;
+              auto hit = traverser.traverse(ray, primitive_intersector);
+              if (hit.has_value()) {
+                auto tidx = hit->primitive_index;
+                if (tidx >= start && tidx <= end) {
+                  s.self_hits++;
+                } else {
+                  s.hits++;
+                }
+              } else {
+                s.misses++;
+                // for details on this math see pp14 of
+                // https://www.sciencedirect.com/science/article/pii/S0304380017304842
+                Scalar absorbed = absorb_factor * sun_flux *
+                                  glm::abs(bvh::dot(t.n, sun_norm)) /
+                                  Scalar(rays_per_triangle);
+                // C++17 doesn't have the std::atomic specializations for
+                // floating point types yet, so we just repeatedly CAS here
+                // until we succeed.
+                if (absorbed < Scalar(0.0f)) {
+                  std::cerr << absorb_factor << std::endl;
+                  std::cerr << sun_flux << std::endl;
+                  std::cerr << glm::abs(bvh::dot(t.n, sun_norm)) << std::endl;
+                  std::cerr << Scalar(rays_per_triangle) << std::endl;
+                  std::cerr << absorbed << std::endl;
+                }
+                assert(absorbed >= Scalar(0.0f));
+                for (Scalar af = s.absorbed_flux;
+                     !s.absorbed_flux.compare_exchange_strong(af,
+                                                              af + absorbed);) {
+                  ;
+                }
+                for (Scalar sf = s.scattered_flux;
+                     !s.scattered_flux.compare_exchange_strong(
+                         sf, sf + scatter_factor * absorbed);) {
+                  ;
+                }
+              }
+            }
           }
-        } else {
-          s.misses++;
-          // for details on this math see pp14 of
-          // https://www.sciencedirect.com/science/article/pii/S0304380017304842
-          Scalar absorbed = absorb_factor * sun_flux *
-                            glm::abs(bvh::dot(t.n, sun_norm)) /
-                            Scalar(rays_per_triangle);
-          s.absorbed_flux += absorbed;
-          s.scattered_flux += scatter_factor * absorbed;
-        }
-      }
-    }
+        });
   }
 
   // TODO: Second pass to scatter some portion of light form each surface
@@ -226,10 +267,10 @@ int main(int argc, char **argv) {
     const auto &instance = mesh_instances[i];
     const auto &s = stats[i];
     output[instance.name] = {
-        {"obstructed_rays", s.hits + s.self_hits},
-        {"unobstructed_rays", s.misses},
-        {"absorbed_flux", s.absorbed_flux},
-        {"scattered_flux", s.scattered_flux},
+        {"obstructed_rays", s.hits.load() + s.self_hits.load()},
+        {"unobstructed_rays", s.misses.load()},
+        {"absorbed_flux", s.absorbed_flux.load()},
+        {"scattered_flux", s.scattered_flux.load()},
     };
   }
   std::cout << output.dump(4) << std::endl;

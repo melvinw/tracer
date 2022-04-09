@@ -7,3 +7,6 @@
 [submodule "thirdparty/CLI11"]
 	path = thirdparty/CLI11
 	url = git@github.com:CLIUtils/CLI11.git
+[submodule "thirdparty/thread-pool"]
+	path = thirdparty/thread-pool
+	url = https://github.com/bshoshany/thread-pool.git
