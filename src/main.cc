@@ -101,7 +101,9 @@ int main(int argc, char **argv) {
 
   CLI11_PARSE(app, argc, argv);
 
-  struct tm tv;
+  struct tm tv = {};
+  tv.tm_mon = 1;
+  tv.tm_mday = 1;
   tv.tm_hour = 12;
   int tz = 0;
   if (time_option->count() > 0) {
@@ -175,7 +177,7 @@ int main(int argc, char **argv) {
   sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
   Scalar d = -bvh::dot(sun_center, sun_norm);
-  Scalar sun_flux = 500 * std::cos(zenith_angle);  // W/m^2
+  Scalar sun_flux = 500 / std::cos(zenith_angle);  // W/m^2
   constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
   // TODO scatter factor should come from material properties of the underlying
   // mesh
