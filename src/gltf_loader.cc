@@ -146,23 +146,23 @@ std::pair<MeshList, MeshInstances> LoadMeshesFromGLTF(const std::string &path) {
                 .data[bufferView.byteOffset + accessor.byteOffset];
         for (size_t i = 0; i < accessor.count; i++) {
           switch (accessor.componentType) {
-          case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
-            const uint8_t *idx = (uint8_t *)&data[i * stride];
-            indices[i] = static_cast<uint32_t>(idx[0]);
-            break;
-          }
-          case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
-            const uint16_t *idx = (uint16_t *)&data[i * stride];
-            indices[i] = static_cast<uint32_t>(idx[0]);
-            break;
-          }
-          case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
-            const uint32_t *idx = (uint32_t *)&data[i * stride];
-            indices[i] = static_cast<uint32_t>(idx[0]);
-            break;
-          }
-          default:
-            assert(false);
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+              const uint8_t *idx = (uint8_t *)&data[i * stride];
+              indices[i] = static_cast<uint32_t>(idx[0]);
+              break;
+            }
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+              const uint16_t *idx = (uint16_t *)&data[i * stride];
+              indices[i] = static_cast<uint32_t>(idx[0]);
+              break;
+            }
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
+              const uint32_t *idx = (uint32_t *)&data[i * stride];
+              indices[i] = static_cast<uint32_t>(idx[0]);
+              break;
+            }
+            default:
+              assert(false);
           }
         }
       }

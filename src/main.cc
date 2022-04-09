@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include <CLI/CLI.hpp>
 #include <bvh/bounding_box.hpp>
 #include <bvh/bvh.hpp>
 #include <bvh/heuristic_primitive_splitter.hpp>
@@ -20,14 +21,12 @@
 #include <bvh/sweep_sah_builder.hpp>
 #include <bvh/triangle.hpp>
 #include <bvh/vector.hpp>
-#include <CLI/CLI.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 #include <json.hpp>
 
 #include "gltf_loader.h"
 #include "gpl/solar_position.h"
 #include "types.h"
-
 
 using Scalar = double;
 using Vec3 = bvh::Vector3<Scalar>;
@@ -40,11 +39,12 @@ struct Stats {
   uint32_t hits;
   uint32_t self_hits;
   uint32_t misses;
-  Scalar absorbed_flux;  // Watts / m^2
-  Scalar scattered_flux; // Watts / m^2
+  Scalar absorbed_flux;   // Watts / m^2
+  Scalar scattered_flux;  // Watts / m^2
 };
 
-std::optional<std::pair<struct tm, int>> parse_time(const std::string &time_string) {
+std::optional<std::pair<struct tm, int>> parse_time(
+    const std::string &time_string) {
   int tz;
   struct tm tv;
   char *end = strptime(time_string.c_str(), "%Y-%m-%dT%H:%M:%S", &tv);
@@ -67,22 +67,27 @@ int main(int argc, char **argv) {
   bool debug = getenv("DEBUG") != nullptr;
 
   std::string gltf_path;
+  app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
 
   double latitude = 0.0f;
   double longitude = 0.0f;
-  std::string time_string;
-  app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
   app.add_option("--lat", latitude, "Latitude")->required();
   app.add_option("--long", longitude, "Longitude")->required();
-  CLI::Option* time_option = app.add_option("--time", time_string, "Time of day - should be in %Y-%m-%dT%H:%M%:S[-/+%H:%M] format");
+
+  std::string time_string;
+  CLI::Option *time_option = app.add_option(
+      "--time", time_string,
+      "Time of day - should be in %Y-%m-%dT%H:%M%:S[-/+%H:%M] format");
+
   CLI11_PARSE(app, argc, argv);
+
   struct tm tv;
   tv.tm_hour = 12;
   int tz = 0;
-  if(time_option->count() > 0){
-      auto time = parse_time(time_string);
-      assert(time.has_value());
-      std::tie(tv, tz) = time.value();
+  if (time_option->count() > 0) {
+    auto time = parse_time(time_string);
+    assert(time.has_value());
+    std::tie(tv, tz) = time.value();
   }
 
   if (debug) {
@@ -150,7 +155,7 @@ int main(int argc, char **argv) {
   sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
   Scalar d = -bvh::dot(sun_center, sun_norm);
-  Scalar sun_flux = 500 * std::cos(zenith_angle); // W/m^2
+  Scalar sun_flux = 500 * std::cos(zenith_angle);  // W/m^2
   constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
   // TODO scatter factor should come from material properties of the underlying
   // mesh

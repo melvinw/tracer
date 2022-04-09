@@ -26,4 +26,4 @@ struct MeshInstance {
   std::optional<glm::mat4> model_matrix;
 };
 
-#endif // TYPES_H_
+#endif  // TYPES_H_
