@@ -74,6 +74,12 @@ int main(int argc, char **argv) {
   app.add_option("--lat", latitude, "Latitude")->required();
   app.add_option("--long", longitude, "Longitude")->required();
 
+  size_t rays_per_triangle = 0;
+  app.add_option("--rays-per-triangle", rays_per_triangle,
+                 "Number of rays to cast from each triangle in the mesh")
+      ->default_val(1);
+  assert(rays_per_triangle != 0);
+
   std::string time_string;
   CLI::Option *time_option = app.add_option(
       "--time", time_string,
@@ -160,7 +166,6 @@ int main(int argc, char **argv) {
   // TODO scatter factor should come from material properties of the underlying
   // mesh
   constexpr Scalar scatter_factor = Scalar(1) / Scalar(10);
-  constexpr size_t rays_per_triangle = 1;
   if (debug) {
     std::cerr << "Zenith angle is: " << zenith_angle << std::endl;
     std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1]
