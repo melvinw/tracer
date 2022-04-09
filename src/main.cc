@@ -238,14 +238,6 @@ int main(int argc, char **argv) {
                 // C++17 doesn't have the std::atomic specializations for
                 // floating point types yet, so we just repeatedly CAS here
                 // until we succeed.
-                if (absorbed < Scalar(0.0f)) {
-                  std::cerr << absorb_factor << std::endl;
-                  std::cerr << sun_flux << std::endl;
-                  std::cerr << glm::abs(bvh::dot(t.n, sun_norm)) << std::endl;
-                  std::cerr << Scalar(rays_per_triangle) << std::endl;
-                  std::cerr << absorbed << std::endl;
-                }
-                assert(absorbed >= Scalar(0.0f));
                 for (Scalar af = s.absorbed_flux;
                      !s.absorbed_flux.compare_exchange_strong(af,
                                                               af + absorbed);) {
