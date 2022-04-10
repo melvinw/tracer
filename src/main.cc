@@ -117,16 +117,12 @@ struct Plane {
   double a, b, c, d;
 };
 
-std::optional<std::pair<struct tm, int>> parse_time(
-    const std::string &time_string) {
+static std::pair<struct tm, int> parse_time(const std::string &time_string) {
   int tz;
   struct tm tv;
   char *end = strptime(time_string.c_str(), "%Y-%m-%dT%H:%M:%S", &tv);
   struct tm tv2;
-  if (end == nullptr) {
-    std::cerr << "Error in parsing time " << time_string << std::endl;
-    return std::nullopt;
-  }
+  assert(end != nullptr);
   if (*end == '-' || *end == '+') {
     end = strptime(end + 1, "%H:%M", &tv2);
     assert(end != nullptr);
@@ -175,9 +171,7 @@ int main(int argc, char **argv) {
   tv.tm_hour = 12;
   int tz = 0;
   if (time_option->count() > 0) {
-    auto time = parse_time(time_string);
-    assert(time.has_value());
-    std::tie(tv, tz) = time.value();
+    std::tie(tv, tz) = parse_time(time_string);
   }
 
   if (debug) {
