@@ -100,6 +100,23 @@ struct AnnotatedTriangle {
   Stats stats;
 };
 
+// TODO: move this to types.h
+struct Plane {
+  Plane() : a(), b(), c(), d() {}
+
+  // normal is assumed to be unit lenght.
+  Plane(const Vec3 &point, const Vec3 &normal)
+      : a(normal[0]), b(normal[1]), c(normal[2]), d(-bvh::dot(point, normal)) {}
+
+  Vec3 ProjectPoint(const Vec3 &point) {
+    Vec3 normal(a, b, c);
+    Scalar signed_dist = bvh::dot(normal, point) + d;
+    return point - normal * signed_dist;
+  }
+
+  double a, b, c, d;
+};
+
 std::optional<std::pair<struct tm, int>> parse_time(
     const std::string &time_string) {
   int tz;
@@ -224,7 +241,7 @@ int main(int argc, char **argv) {
       glm::vec3(sun_center[0], sun_center[1], sun_center[2]), zenith_angle);
   sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
-  Scalar d = -bvh::dot(sun_center, sun_norm);
+  Plane sun_plane(sun_center, sun_norm);
   Scalar sun_flux = 500 / std::cos(zenith_angle);  // W/m^2
   constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
   // TODO scatter factor should come from material properties of the underlying
@@ -253,7 +270,7 @@ int main(int argc, char **argv) {
             // TODO sample ray origins from surface instead of casting from
             // center
             auto origin = t.triangle.center() + t.triangle.n * .000000001;
-            auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
+            auto dir = origin - sun_plane.ProjectPoint(origin);
             bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
                                  2.0 * bsphere.radius);
 
