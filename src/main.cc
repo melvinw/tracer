@@ -40,11 +40,65 @@ using Sphere = bvh::Sphere<Scalar>;
 
 struct Stats {
   Stats()
-      : hits(0), absorbed_flux(Scalar(0.0f)), scattered_flux(Scalar(0.0f)) {}
+      : hits(0),
+        misses(0),
+        absorbed_flux(Scalar(0.0f)),
+        scattered_flux(Scalar(0.0f)) {}
+
+  Stats(const Stats &other)
+      : hits(other.hits.load()),
+        misses(other.misses.load()),
+        absorbed_flux(other.absorbed_flux.load()),
+        scattered_flux(other.absorbed_flux.load()) {}
+
+  Stats(Stats &&other)
+      : hits(other.hits.load()),
+        misses(other.misses.load()),
+        absorbed_flux(other.absorbed_flux.load()),
+        scattered_flux(other.absorbed_flux.load()) {}
+
+  void Merge(const Stats &s) {
+    hits = hits.load() + s.hits.load();
+    misses = misses.load() + s.misses.load();
+    absorbed_flux = absorbed_flux.load() + s.absorbed_flux.load();
+    scattered_flux = scattered_flux.load() + s.scattered_flux.load();
+  }
+
   std::atomic<uint32_t> hits;
   std::atomic<uint32_t> misses;
   std::atomic<Scalar> absorbed_flux;   // Watts / m^2
   std::atomic<Scalar> scattered_flux;  // Watts / m^2
+};
+
+struct AnnotatedTriangle {
+  struct Intersection {
+    Scalar t;
+
+    // Required member: returns the distance along the ray
+    Scalar distance() const { return t; }
+  };
+
+  using ScalarType = Scalar;
+  using IntersectionType = Intersection;
+
+  AnnotatedTriangle() = default;
+  AnnotatedTriangle(size_t idx, const Triangle &t)
+      : mesh_idx(idx), triangle(t), stats(){};
+
+  Vec3 center() const { return triangle.center(); }
+
+  BoundingBox bounding_box() const { return triangle.bounding_box(); }
+
+  std::optional<Intersection> intersect(const bvh::Ray<Scalar> &ray) const {
+    if (auto ret = triangle.intersect(ray); ret.has_value()) {
+      return Intersection{.t = ret.value().t};
+    }
+    return std::nullopt;
+  }
+
+  size_t mesh_idx;
+  Triangle triangle;
+  Stats stats;
 };
 
 std::optional<std::pair<struct tm, int>> parse_time(
@@ -114,12 +168,10 @@ int main(int argc, char **argv) {
 
   auto [meshes, mesh_instances] = LoadMeshesFromGLTF(gltf_path);
 
-  std::vector<Triangle> triangles;
-  std::map<int, std::pair<size_t, size_t>> instance_triangles;
+  std::vector<AnnotatedTriangle> triangles;
   for (size_t idx = 0; idx < mesh_instances.size(); idx++) {
     const auto &instance = mesh_instances[idx];
     const auto &mesh = meshes[instance.mesh_index];
-    size_t start = triangles.size();
     for (size_t i = 0; i < mesh.indices.size(); i += 3) {
       glm::vec4 v0 = mesh.vertices[mesh.indices[i]].position;
       glm::vec4 v1 = mesh.vertices[mesh.indices[i + 1]].position;
@@ -129,12 +181,11 @@ int main(int argc, char **argv) {
         v1 = instance.model_matrix.value() * v1;
         v2 = instance.model_matrix.value() * v2;
       }
-      triangles.push_back(Triangle(Vec3(v0.x, v0.y, v0.z),
-                                   Vec3(v1.x, v1.y, v1.z),
-                                   Vec3(v2.x, v2.y, v2.z)));
+      AnnotatedTriangle t(
+          idx, Triangle(Vec3(v0.x, v0.y, v0.z), Vec3(v1.x, v1.y, v1.z),
+                        Vec3(v2.x, v2.y, v2.z)));
+      triangles.emplace_back(std::move(t));
     }
-    size_t end = triangles.size() - 1;
-    instance_triangles[idx] = {start, end};
   }
 
   if (debug) {
@@ -187,67 +238,59 @@ int main(int argc, char **argv) {
   thread_pool tpool(num_workers);
 
   // First pass to accumulate light on each mesh
-  bvh::AnyPrimitiveIntersector<Bvh, Triangle> intersector(bvh,
-                                                          triangles.data());
+  bvh::AnyPrimitiveIntersector<Bvh, AnnotatedTriangle> intersector(
+      bvh, triangles.data());
   bvh::SingleRayTraverser<Bvh> traverser(bvh);
-  std::vector<Stats> stats(mesh_instances.size());
-  for (const auto &[idx, interval] : instance_triangles) {
-    const auto &instance = mesh_instances[idx];
-    const auto [start, end] = interval;
-    if (debug) {
-      std::cerr << "launching " << end - start + 1 << " rays from "
-                << instance.name << "(" << start << ", " << end << ")"
-                << std::endl;
-    }
+  tpool.parallelize_loop(
+      0ull, triangles.size(), [&](const size_t &lo, const size_t &hi) {
+        for (size_t i = lo; i < hi; i++) {
+          auto &t = triangles[i];
 
-    Stats &s = stats[idx];
-    tpool.parallelize_loop(
-        start, end + 1, [&](const size_t &tlo, const size_t &thi) {
-          for (size_t i = tlo; i < thi; i++) {
-            const auto &t = triangles[i];
+          for (size_t j = 0; j < rays_per_triangle; j++) {
+            // offset ray origin by scaled down normal to avoid self
+            // intersections.
+            // TODO sample ray origins from surface instead of casting from
+            // center
+            auto origin = t.triangle.center() + t.triangle.n * .000000001;
+            auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
+            bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
+                                 2.0 * bsphere.radius);
 
-            for (size_t j = 0; j < rays_per_triangle; j++) {
-              // offset ray origin by scaled down normal to avoid self
-              // intersections.
-              // TODO sample ray origins from surface instead of casting from
-              // center
-              auto origin = t.center() + t.n * .000000001;
-              auto dir = origin - sun_norm * (bvh::dot(sun_norm, origin) + d);
-              bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
-                                   2.0 * bsphere.radius);
-
-              auto hit = traverser.traverse(ray, intersector);
-              if (hit.has_value()) {
-                s.hits++;
-              } else {
-                s.misses++;
-                // for details on this math see pp14 of
-                // https://www.sciencedirect.com/science/article/pii/S0304380017304842
-                Scalar absorbed = absorb_factor * sun_flux *
-                                  glm::abs(bvh::dot(t.n, sun_norm)) /
-                                  Scalar(rays_per_triangle);
-                // C++17 doesn't have the std::atomic specializations for
-                // floating point types yet, so we just repeatedly CAS here
-                // until we succeed.
-                for (Scalar af = s.absorbed_flux;
-                     !s.absorbed_flux.compare_exchange_strong(af,
-                                                              af + absorbed);) {
-                  ;
-                }
-                for (Scalar sf = s.scattered_flux;
-                     !s.scattered_flux.compare_exchange_strong(
-                         sf, sf + scatter_factor * absorbed);) {
-                  ;
-                }
+            auto hit = traverser.traverse(ray, intersector);
+            if (hit.has_value()) {
+              t.stats.hits++;
+            } else {
+              t.stats.misses++;
+              // for details on this math see pp14 of
+              // https://www.sciencedirect.com/science/article/pii/S0304380017304842
+              Scalar absorbed = absorb_factor * sun_flux *
+                                glm::abs(bvh::dot(t.triangle.n, sun_norm)) /
+                                Scalar(rays_per_triangle);
+              // C++17 doesn't have the std::atomic specializations for
+              // floating point types yet, so we just repeatedly CAS here
+              // until we succeed.
+              for (Scalar af = t.stats.absorbed_flux;
+                   !t.stats.absorbed_flux.compare_exchange_strong(
+                       af, af + absorbed);) {
+                ;
+              }
+              for (Scalar sf = t.stats.scattered_flux;
+                   !t.stats.scattered_flux.compare_exchange_strong(
+                       sf, sf + scatter_factor * absorbed);) {
+                ;
               }
             }
           }
-        });
-  }
+        }
+      });
 
   // TODO: Second pass to scatter some portion of light form each surface
 
   nlohmann::json output;
+  std::vector<Stats> stats(mesh_instances.size());
+  for (const auto &t : triangles) {
+    stats[t.mesh_idx].Merge(t.stats);
+  }
   for (size_t i = 0; i < mesh_instances.size(); i++) {
     const auto &instance = mesh_instances[i];
     const auto &s = stats[i];
