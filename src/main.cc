@@ -234,7 +234,6 @@ int main(int argc, char **argv) {
               << ") w/ radius " << bsphere.radius << std::endl;
   }
 
-  // TODO: Sun is fixed at high noon right now. Make this configurable.
   Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
   float zenith_angle = sunAngle(latitude, longitude, tz, tv);
   glm::vec3 sun_center_glm = glm::rotateY(
@@ -242,11 +241,13 @@ int main(int argc, char **argv) {
   sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
   Plane sun_plane(sun_center, sun_norm);
-  Scalar sun_flux = 500 / std::cos(zenith_angle);  // W/m^2
-  constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
+  Scalar sun_flux = 1362 / std::cos(zenith_angle);  // W/m^2
+
   // TODO scatter factor should come from material properties of the underlying
   // mesh
   constexpr Scalar scatter_factor = Scalar(1) / Scalar(10);
+  constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
+
   if (debug) {
     std::cerr << "Zenith angle is: " << zenith_angle << std::endl;
     std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1]
