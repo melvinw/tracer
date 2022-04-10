@@ -40,12 +40,8 @@ using Sphere = bvh::Sphere<Scalar>;
 
 struct Stats {
   Stats()
-      : hits(0),
-        self_hits(0),
-        absorbed_flux(Scalar(0.0f)),
-        scattered_flux(Scalar(0.0f)) {}
+      : hits(0), absorbed_flux(Scalar(0.0f)), scattered_flux(Scalar(0.0f)) {}
   std::atomic<uint32_t> hits;
-  std::atomic<uint32_t> self_hits;
   std::atomic<uint32_t> misses;
   std::atomic<Scalar> absorbed_flux;   // Watts / m^2
   std::atomic<Scalar> scattered_flux;  // Watts / m^2
@@ -191,8 +187,8 @@ int main(int argc, char **argv) {
   thread_pool tpool(num_workers);
 
   // First pass to accumulate light on each mesh
-  bvh::ClosestPrimitiveIntersector<Bvh, Triangle> primitive_intersector(
-      bvh, triangles.data());
+  bvh::AnyPrimitiveIntersector<Bvh, Triangle> intersector(bvh,
+                                                          triangles.data());
   bvh::SingleRayTraverser<Bvh> traverser(bvh);
   std::vector<Stats> stats(mesh_instances.size());
   for (const auto &[idx, interval] : instance_triangles) {
@@ -220,14 +216,9 @@ int main(int argc, char **argv) {
               bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
                                    2.0 * bsphere.radius);
 
-              auto hit = traverser.traverse(ray, primitive_intersector);
+              auto hit = traverser.traverse(ray, intersector);
               if (hit.has_value()) {
-                auto tidx = hit->primitive_index;
-                if (tidx >= start && tidx <= end) {
-                  s.self_hits++;
-                } else {
-                  s.hits++;
-                }
+                s.hits++;
               } else {
                 s.misses++;
                 // for details on this math see pp14 of
@@ -261,7 +252,7 @@ int main(int argc, char **argv) {
     const auto &instance = mesh_instances[i];
     const auto &s = stats[i];
     output[instance.name] = {
-        {"obstructed_rays", s.hits.load() + s.self_hits.load()},
+        {"obstructed_rays", s.hits.load()},
         {"unobstructed_rays", s.misses.load()},
         {"absorbed_flux", s.absorbed_flux.load()},
         {"scattered_flux", s.scattered_flux.load()},
