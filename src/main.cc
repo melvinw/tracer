@@ -1,6 +1,5 @@
 #include <atomic>
 #include <cassert>
-#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <map>
@@ -122,7 +121,6 @@ std::optional<std::pair<struct tm, int>> parse_time(
 int main(int argc, char **argv) {
   // TODO: use a real logging library
   CLI::App app{"Tracer"};
-  bool debug = getenv("DEBUG") != nullptr;
 
   std::string gltf_path;
   app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
@@ -148,6 +146,9 @@ int main(int argc, char **argv) {
   CLI::Option *time_option = app.add_option(
       "--time", time_string,
       "Time of day - should be in %Y-%m-%dT%H:%M%:S[-/+%H:%M] format");
+
+  bool debug = false;
+  app.add_flag("--verbose", debug, "Be verbose.");
 
   CLI11_PARSE(app, argc, argv);
 
