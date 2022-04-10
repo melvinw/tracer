@@ -36,7 +36,11 @@ std::pair<MeshList, MeshInstances> LoadMeshesFromGLTF(const std::string &path) {
     ret = loader.LoadASCIIFromString(&model, &err, &warn, in.c_str(), in.size(),
                                      base_dir);
   } else {
-    ret = loader.LoadASCIIFromFile(&model, &err, &warn, path.c_str());
+    if (path.find(".glb") != std::string::npos) {
+      ret = loader.LoadBinaryFromFile(&model, &err, &warn, path.c_str());
+    } else {
+      ret = loader.LoadASCIIFromFile(&model, &err, &warn, path.c_str());
+    }
   }
   if (!warn.empty()) {
     std::cerr << "warning: " << warn;
