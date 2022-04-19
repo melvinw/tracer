@@ -4,6 +4,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <random>
 #include <string>
 #include <thread>
 #include <utility>
@@ -22,7 +23,6 @@
 #include <bvh/sweep_sah_builder.hpp>
 #include <bvh/triangle.hpp>
 #include <bvh/vector.hpp>
-#include <CLI/CLI.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 #include <json.hpp>
 #include <thread_pool.hpp>
@@ -30,7 +30,6 @@
 #include "gltf_loader.h"
 #include "gpl/solar_position.h"
 #include "types.h"
-
 
 using Scalar = double;
 using Vec3 = bvh::Vector3<Scalar>;
@@ -119,6 +118,26 @@ struct Plane {
   double a, b, c, d;
 };
 
+struct UniformRandomGenerator {
+  std::mt19937 generator;
+  std::uniform_real_distribution<double> uniform01;
+  UniformRandomGenerator(uint32_t seed)
+      : generator(seed), uniform01(0.0, 1.0) {}
+
+  double operator()() { return uniform01(generator); }
+};
+Vec3 generate_random_direction(UniformRandomGenerator &gen) {
+  // Generating uniformly random points on a hemisphere:
+  // https://pbr-book.org/3ed-2018/Monte_Carlo_Integration/2D_Sampling_with_Multidimensional_Transformations
+  double e1 = gen();
+  double e2 = gen();
+  double theta = acos(e1);
+  double phi = 2 * M_PI * e2;
+  double x = sin(theta) * cos(phi);
+  double y = sin(theta) * sin(phi);
+  double z = cos(theta);
+  return bvh::normalize(Vec3(x, y, z));
+}
 static std::pair<struct tm, int> parse_time(const std::string &time_string) {
   int tz;
   struct tm tv;
@@ -300,6 +319,49 @@ int main(int argc, char **argv) {
       });
 
   // TODO: Second pass to scatter some portion of light form each surface
+  bvh::ClosestPrimitiveIntersector<Bvh, AnnotatedTriangle> closest_intersector(
+      bvh, triangles.data());
+  bvh::SingleRayTraverser<Bvh> scatter_traverser(bvh);
+  uint32_t seed = std::chrono::system_clock::now().time_since_epoch().count();
+  UniformRandomGenerator uniform_rng(seed);
+  tpool.parallelize_loop(
+      0ull, triangles.size(), [&](const size_t &lo, const size_t &hi) {
+        for (size_t i = lo; i < hi; i++) {
+          auto &t = triangles[i];
+
+          for (size_t j = 0; j < rays_per_triangle; j++) {
+            // offset ray origin by scaled down normal to avoid self
+            // intersections.
+            // TODO sample ray origins from surface instead of casting from
+            // center
+            auto origin = t.triangle.center() + t.triangle.n * .000000001;
+            auto dir = generate_random_direction(uniform_rng);
+            bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
+                                 2.0 * bsphere.radius);
+
+            auto hit = scatter_traverser.traverse(ray, closest_intersector);
+            if (hit.has_value()) {
+              auto intersection_info = *hit;
+
+              std::cout << intersection_info.primitive_index << std::endl;
+              Scalar absorbed = absorb_factor *
+                                glm::abs(bvh::dot(t.triangle.n, dir)) *
+                                triangles[intersection_info.primitive_index]
+                                    .stats.scattered_flux /
+                                rays_per_triangle;
+              for (Scalar af = t.stats.absorbed_flux;
+                   !t.stats.absorbed_flux.compare_exchange_strong(
+                       af, af + absorbed);) {
+              }
+              if (debug) {
+                std::cout << "Closest intersection index is: "
+                          << intersection_info.primitive_index << std::endl;
+                std::cout << "Absorbed flux is: " << absorbed << std::endl;
+              }
+            }
+          }
+        }
+      });
 
   nlohmann::json output;
   std::vector<Stats> stats(mesh_instances.size());
