@@ -29,6 +29,7 @@
 
 #include "gltf_loader.h"
 #include "gpl/solar_position.h"
+#include "obj_loader.h"
 #include "types.h"
 
 using Scalar = double;
@@ -155,7 +156,7 @@ static std::pair<struct tm, int> parse_time(const std::string &time_string) {
 int main(int argc, char **argv) {
   // TODO: use a real logging library
   CLI::App app{"Tracer"};
-
+  LoadMeshesFromOBJ("cube.obj");
   std::string gltf_path;
   app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
 
@@ -342,8 +343,6 @@ int main(int argc, char **argv) {
             auto hit = scatter_traverser.traverse(ray, closest_intersector);
             if (hit.has_value()) {
               auto intersection_info = *hit;
-
-              std::cout << intersection_info.primitive_index << std::endl;
               Scalar absorbed = absorb_factor *
                                 glm::abs(bvh::dot(t.triangle.n, dir)) *
                                 triangles[intersection_info.primitive_index]
