@@ -28,6 +28,7 @@
 
 #include "gltf_loader.h"
 #include "gpl/solar_position.h"
+#include "obj_loader.h"
 #include "types.h"
 
 using Scalar = double;
@@ -134,7 +135,7 @@ static std::pair<struct tm, int> parse_time(const std::string &time_string) {
 int main(int argc, char **argv) {
   // TODO: use a real logging library
   CLI::App app{"Tracer"};
-
+  LoadMeshesFromOBJ("cube.obj");
   std::string gltf_path;
   app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
 
