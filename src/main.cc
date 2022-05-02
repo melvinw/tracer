@@ -126,6 +126,7 @@ struct UniformRandomGenerator {
 
   double operator()() { return uniform01(generator); }
 };
+
 Vec3 generate_random_direction(UniformRandomGenerator &gen) {
   // Generating uniformly random points on a hemisphere:
   // https://pbr-book.org/3ed-2018/Monte_Carlo_Integration/2D_Sampling_with_Multidimensional_Transformations
@@ -138,6 +139,7 @@ Vec3 generate_random_direction(UniformRandomGenerator &gen) {
   double z = cos(theta);
   return bvh::normalize(Vec3(x, y, z));
 }
+
 static std::pair<struct tm, int> parse_time(const std::string &time_string) {
   int tz;
   struct tm tv;
