@@ -135,9 +135,8 @@ static std::pair<struct tm, int> parse_time(const std::string &time_string) {
 int main(int argc, char **argv) {
   // TODO: use a real logging library
   CLI::App app{"Tracer"};
-  LoadMeshesFromOBJ("cube.obj");
-  std::string gltf_path;
-  app.add_option("--gltf_path", gltf_path, "Path to GLTF")->required();
+  std::string scene_path;
+  app.add_option("--scene_path", scene_path, "Path to scene")->required();
 
   double latitude = 0.0f;
   double longitude = 0.0f;
@@ -176,10 +175,26 @@ int main(int argc, char **argv) {
   }
 
   if (debug) {
-    std::cerr << "loading " << gltf_path << std::endl;
+    std::cerr << "loading " << scene_path << std::endl;
   }
 
-  auto [meshes, mesh_instances] = LoadMeshesFromGLTF(gltf_path);
+  const std::string OBJ_EXTENSION = ".obj";
+  const std::string GLTF_EXTENSION = ".gltf";
+
+  MeshList meshes;
+  MeshInstances mesh_instances;
+  if (scene_path.size() >= OBJ_EXTENSION.size() &&
+      scene_path.substr(scene_path.size() - OBJ_EXTENSION.size())
+              .compare(OBJ_EXTENSION) == 0) {
+    std::tie(meshes, mesh_instances) = LoadMeshesFromOBJ(scene_path);
+  } else if (scene_path.size() >= GLTF_EXTENSION.size() &&
+             scene_path.substr(scene_path.size() - GLTF_EXTENSION.size())
+                     .compare(GLTF_EXTENSION) == 0) {
+    std::tie(meshes, mesh_instances) = LoadMeshesFromOBJ(scene_path);
+  } else {
+    std::cerr << "Scene path should be either ending in .gltf or .obj\n";
+    return -1;
+  }
 
   std::vector<AnnotatedTriangle> triangles;
   for (size_t idx = 0; idx < mesh_instances.size(); idx++) {
