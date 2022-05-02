@@ -45,7 +45,7 @@ executable(
   'tracer',
   ['src/main.cc', 'src/gltf_loader.cc', 'src/gpl/solar_position.cc', 'src/obj_loader.cc'],
   include_directories: inc_dirs,
-  link_with: [tinygltf,tinyobjloader],
+  link_with: [tinygltf, tinyobjloader],
   dependencies: [glm_dep, omp_dep, threads_dep],
   cpp_args: cxx_flags
 )
