@@ -318,7 +318,6 @@ int main(int argc, char **argv) {
         }
       });
 
-  // TODO: Second pass to scatter some portion of light form each surface
   bvh::ClosestPrimitiveIntersector<Bvh, AnnotatedTriangle> closest_intersector(
       bvh, triangles.data());
   bvh::SingleRayTraverser<Bvh> scatter_traverser(bvh);
