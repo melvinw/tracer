@@ -26,4 +26,7 @@ struct MeshInstance {
   std::optional<glm::mat4> model_matrix;
 };
 
+using MeshList = std::vector<Mesh>;
+using MeshInstances = std::vector<MeshInstance>;
+
 #endif  // TYPES_H_
