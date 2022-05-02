@@ -178,22 +178,23 @@ int main(int argc, char **argv) {
     std::cerr << "loading " << scene_path << std::endl;
   }
 
-  const std::string OBJ_EXTENSION = ".obj";
-  const std::string GLTF_EXTENSION = ".gltf";
+  const std::string kOBJExtension = ".obj";
+  const std::string kGLTFExtension = ".gltf";
+  const std::string kGLBExtension = ".glb";
 
   MeshList meshes;
   MeshInstances mesh_instances;
-  if (scene_path.size() >= OBJ_EXTENSION.size() &&
-      scene_path.substr(scene_path.size() - OBJ_EXTENSION.size())
-              .compare(OBJ_EXTENSION) == 0) {
+  if (scene_path.find(kOBJExtension) ==
+      (scene_path.size() - kOBJExtension.size())) {
     std::tie(meshes, mesh_instances) = LoadMeshesFromOBJ(scene_path);
-  } else if (scene_path.size() >= GLTF_EXTENSION.size() &&
-             scene_path.substr(scene_path.size() - GLTF_EXTENSION.size())
-                     .compare(GLTF_EXTENSION) == 0) {
-    std::tie(meshes, mesh_instances) = LoadMeshesFromOBJ(scene_path);
+  } else if (scene_path.find(kGLTFExtension) ==
+                 (scene_path.size() - kGLTFExtension.size()) ||
+             scene_path.find(kGLBExtension) ==
+                 (scene_path.size() - kGLBExtension.size())) {
+    std::tie(meshes, mesh_instances) = LoadMeshesFromGLTF(scene_path);
   } else {
     std::cerr << "Scene path should be either ending in .gltf or .obj\n";
-    return -1;
+    assert(0);
   }
 
   std::vector<AnnotatedTriangle> triangles;
