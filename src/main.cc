@@ -55,7 +55,13 @@ struct Stats {
         misses(other.misses.load()),
         absorbed_flux(other.absorbed_flux.load()),
         scattered_flux(other.absorbed_flux.load()) {}
-
+  Stats &operator=(Stats &&other) {
+    hits = other.hits.load();
+    misses = other.misses.load();
+    absorbed_flux = other.absorbed_flux.load();
+    scattered_flux = other.absorbed_flux.load();
+    return *this;
+  }
   void Merge(const Stats &s) {
     hits = hits.load() + s.hits.load();
     misses = misses.load() + s.misses.load();
@@ -155,23 +161,50 @@ int main(int argc, char **argv) {
       ->default_val(std::thread::hardware_concurrency());
   assert(num_workers != 0);
 
-  std::string time_string;
-  CLI::Option *time_option = app.add_option(
-      "--time", time_string,
-      "Time of day - should be in %Y-%m-%dT%H:%M%:S[-/+%H:%M] format");
+  std::string start_time_string;
+  CLI::Option *start_time_option = app.add_option(
+      "--time", start_time_string,
+      "Time of day - should be in %Y-%m-%dT%H:%M:%S[-/+%H:%M] format");
 
+  std::string end_time_string;
+  CLI::Option *end_time_option = app.add_option(
+      "--end-time", end_time_string,
+      "End time - should be in %Y-%m-%dT%H:%M:%S[-/+%H:%M] format");
+
+  std::string increment_time_string;
+  CLI::Option *increment_time_option =
+      app.add_option("--increment-time", increment_time_string,
+                     "Increment time - should be in %Y-%m-%dT%H:%M:%Sformat");
   bool debug = false;
   app.add_flag("--verbose", debug, "Be verbose.");
 
   CLI11_PARSE(app, argc, argv);
 
-  struct tm tv = {};
-  tv.tm_mon = 1;
-  tv.tm_mday = 1;
-  tv.tm_hour = 12;
-  int tz = 0;
-  if (time_option->count() > 0) {
-    std::tie(tv, tz) = parse_time(time_string);
+  struct tm start_tv = {};
+  start_tv.tm_mon = 1;
+  start_tv.tm_mday = 1;
+  start_tv.tm_hour = 12;
+  int start_tz = 0;
+  if (start_time_option->count() > 0) {
+    std::tie(start_tv, start_tz) = parse_time(start_time_string);
+  }
+
+  struct tm end_tv = start_tv;
+  int end_tz = end_tz;
+  if (end_time_option->count() > 0) {
+    std::tie(end_tv, end_tz) = parse_time(end_time_string);
+  }
+
+  struct tm increment_tv;
+  increment_tv.tm_mon = 0;
+  increment_tv.tm_mday = 0;
+  increment_tv.tm_hour = 1;  // Increments by hour by default
+  increment_tv.tm_min = 0;
+  increment_tv.tm_sec = 0;
+  int increment_tz;
+  if (increment_time_option->count() > 0) {
+    std::tie(increment_tv, increment_tz) =
+        parse_time(increment_time_string);  // Increment_tz is irrelevant
   }
 
   if (debug) {
@@ -229,81 +262,102 @@ int main(int argc, char **argv) {
   }
 
   Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
-  float zenith_angle = sunAngle(latitude, longitude, tz, tv);
-  glm::vec3 sun_center_glm = glm::rotateY(
-      glm::vec3(sun_center[0], sun_center[1], sun_center[2]), zenith_angle);
-  sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
-  Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
-  Plane sun_plane(sun_center, sun_norm);
-  Scalar sun_flux = 1362 / std::cos(zenith_angle);  // W/m^2
-
-  // TODO scatter factor should come from material properties of the underlying
-  // mesh
-  constexpr Scalar scatter_factor = Scalar(1) / Scalar(10);
-  constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
-
-  if (debug) {
-    std::cerr << "Zenith angle is: " << zenith_angle << std::endl;
-    std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1]
-              << ", " << sun_center[2] << ")" << std::endl;
-  }
-
-  thread_pool tpool(num_workers);
-
-  // First pass to accumulate light on each mesh
-  bvh::AnyPrimitiveIntersector<Bvh, AnnotatedTriangle> intersector(
-      bvh, triangles.data());
-  bvh::SingleRayTraverser<Bvh> traverser(bvh);
-  tpool.parallelize_loop(
-      0ull, triangles.size(), [&](const size_t &lo, const size_t &hi) {
-        for (size_t i = lo; i < hi; i++) {
-          auto &t = triangles[i];
-
-          for (size_t j = 0; j < rays_per_triangle; j++) {
-            // offset ray origin by scaled down normal to avoid self
-            // intersections.
-            // TODO sample ray origins from surface instead of casting from
-            // center
-            auto origin = t.triangle.center() + t.triangle.n * .000000001;
-            auto dir = origin - sun_plane.ProjectPoint(origin);
-            bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
-                                 2.0 * bsphere.radius);
-
-            auto hit = traverser.traverse(ray, intersector);
-            if (hit.has_value()) {
-              t.stats.hits++;
-            } else {
-              t.stats.misses++;
-              // for details on this math see pp14 of
-              // https://www.sciencedirect.com/science/article/pii/S0304380017304842
-              Scalar absorbed = absorb_factor * sun_flux *
-                                glm::abs(bvh::dot(t.triangle.n, sun_norm)) /
-                                Scalar(rays_per_triangle);
-              // C++17 doesn't have the std::atomic specializations for
-              // floating point types yet, so we just repeatedly CAS here
-              // until we succeed.
-              for (Scalar af = t.stats.absorbed_flux;
-                   !t.stats.absorbed_flux.compare_exchange_strong(
-                       af, af + absorbed);) {
-                ;
-              }
-              for (Scalar sf = t.stats.scattered_flux;
-                   !t.stats.scattered_flux.compare_exchange_strong(
-                       sf, sf + scatter_factor * absorbed);) {
-                ;
-              }
-            }
-          }
-        }
-      });
-
-  // TODO: Second pass to scatter some portion of light form each surface
 
   nlohmann::json output;
   std::vector<Stats> stats(mesh_instances.size());
-  for (const auto &t : triangles) {
-    stats[t.mesh_idx].Merge(t.stats);
+  struct tm current_tv = start_tv;
+
+  // mktime takes care of value overflows for struct tm values and modifies the
+  // struct tm being passed in
+  while (mktime(&current_tv) <= mktime(&end_tv)) {
+    float zenith_angle = sunAngle(latitude, longitude, start_tz, current_tv);
+    glm::vec3 sun_center_glm = glm::rotateY(
+        glm::vec3(sun_center[0], sun_center[1], sun_center[2]), zenith_angle);
+    sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
+    Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
+    Plane sun_plane(sun_center, sun_norm);
+    Scalar sun_flux = 1362 / std::cos(zenith_angle);  // W/m^2
+
+    // TODO scatter factor should come from material properties of the
+    // underlying mesh
+    constexpr Scalar scatter_factor = Scalar(1) / Scalar(10);
+    constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
+
+    if (debug) {
+      std::cerr << "Zenith angle is: " << zenith_angle << std::endl;
+      std::cerr << "sun disk at (" << sun_center[0] << ", " << sun_center[1]
+                << ", " << sun_center[2] << ")" << std::endl;
+    }
+
+    thread_pool tpool(num_workers);
+
+    // First pass to accumulate light on each mesh
+    bvh::AnyPrimitiveIntersector<Bvh, AnnotatedTriangle> intersector(
+        bvh, triangles.data());
+    bvh::SingleRayTraverser<Bvh> traverser(bvh);
+    tpool.parallelize_loop(
+        0ull, triangles.size(), [&](const size_t &lo, const size_t &hi) {
+          for (size_t i = lo; i < hi; i++) {
+            auto &t = triangles[i];
+
+            for (size_t j = 0; j < rays_per_triangle; j++) {
+              // offset ray origin by scaled down normal to avoid self
+              // intersections.
+              // TODO sample ray origins from surface instead of casting from
+              // center
+              auto origin = t.triangle.center() + t.triangle.n * .000000001;
+              auto dir = origin - sun_plane.ProjectPoint(origin);
+              bvh::Ray<Scalar> ray(origin, bvh::normalize(dir), 0.000001,
+                                   2.0 * bsphere.radius);
+
+              auto hit = traverser.traverse(ray, intersector);
+              if (hit.has_value()) {
+                t.stats.hits++;
+              } else {
+                t.stats.misses++;
+                // for details on this math see pp14 of
+                // https://www.sciencedirect.com/science/article/pii/S0304380017304842
+                Scalar absorbed = absorb_factor * sun_flux *
+                                  glm::abs(bvh::dot(t.triangle.n, sun_norm)) /
+                                  Scalar(rays_per_triangle);
+                // C++17 doesn't have the std::atomic specializations for
+                // floating point types yet, so we just repeatedly CAS here
+                // until we succeed.
+                for (Scalar af = t.stats.absorbed_flux;
+                     !t.stats.absorbed_flux.compare_exchange_strong(
+                         af, af + absorbed);) {
+                  ;
+                }
+                for (Scalar sf = t.stats.scattered_flux;
+                     !t.stats.scattered_flux.compare_exchange_strong(
+                         sf, sf + scatter_factor * absorbed);) {
+                  ;
+                }
+              }
+            }
+          }
+        });
+
+    for (const auto &t : triangles) {
+      if (t.stats.absorbed_flux >
+          0.0) {  // TODO: need to check if sun's position is the reason for
+                  // negative flux
+        stats[t.mesh_idx].Merge(t.stats);
+      }
+    }
+
+    for (auto &t : triangles) {
+      t.stats = Stats();
+    }
+
+    // TODO: Second pass to scatter some portion of light form each surface
+    current_tv.tm_mon += increment_tv.tm_mon;
+    current_tv.tm_mday += increment_tv.tm_mday;
+    current_tv.tm_hour += increment_tv.tm_hour;
+    current_tv.tm_min += increment_tv.tm_min;
+    current_tv.tm_sec += increment_tv.tm_sec;
   }
+
   for (size_t i = 0; i < mesh_instances.size(); i++) {
     const auto &instance = mesh_instances[i];
     const auto &s = stats[i];
