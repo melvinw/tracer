@@ -262,6 +262,9 @@ int main(int argc, char **argv) {
   }
 
   Vec3 sun_center = bsphere.origin + Vec3(0, 0, bsphere.radius);
+
+  nlohmann::json output;
+  std::vector<Stats> stats(mesh_instances.size());
   struct tm current_tv = start_tv;
 
   // mktime takes care of value overflows for struct tm values and modifies the
@@ -334,25 +337,18 @@ int main(int argc, char **argv) {
             }
           }
         });
-    nlohmann::json output;
-    std::vector<Stats> stats(mesh_instances.size());
+
     for (const auto &t : triangles) {
-      stats[t.mesh_idx].Merge(t.stats);
+      if (t.stats.absorbed_flux >
+          0.0) {  // TODO: need to check if sun's position is the reason for
+                  // negative flux
+        stats[t.mesh_idx].Merge(t.stats);
+      }
     }
-    for (size_t i = 0; i < mesh_instances.size(); i++) {
-      const auto &instance = mesh_instances[i];
-      const auto &s = stats[i];
-      output[instance.name] = {
-          {"obstructed_rays", s.hits.load()},
-          {"unobstructed_rays", s.misses.load()},
-          {"absorbed_flux", s.absorbed_flux.load()},
-          {"scattered_flux", s.scattered_flux.load()},
-      };
-    }
+
     for (auto &t : triangles) {
       t.stats = Stats();
     }
-    std::cout << output.dump(4) << std::endl;
 
     // TODO: Second pass to scatter some portion of light form each surface
     current_tv.tm_mon += increment_tv.tm_mon;
@@ -361,6 +357,18 @@ int main(int argc, char **argv) {
     current_tv.tm_min += increment_tv.tm_min;
     current_tv.tm_sec += increment_tv.tm_sec;
   }
+
+  for (size_t i = 0; i < mesh_instances.size(); i++) {
+    const auto &instance = mesh_instances[i];
+    const auto &s = stats[i];
+    output[instance.name] = {
+        {"obstructed_rays", s.hits.load()},
+        {"unobstructed_rays", s.misses.load()},
+        {"absorbed_flux", s.absorbed_flux.load()},
+        {"scattered_flux", s.scattered_flux.load()},
+    };
+  }
+  std::cout << output.dump(4) << std::endl;
 
   return 0;
 }
