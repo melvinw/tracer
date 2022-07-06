@@ -235,12 +235,13 @@ int main(int argc, char **argv) {
   sun_center = Vec3(sun_center_glm[0], sun_center_glm[1], sun_center_glm[2]);
   Vec3 sun_norm = bvh::normalize(sun_center - bsphere.origin);
   Plane sun_plane(sun_center, sun_norm);
-  Scalar sun_flux = 1362 / std::cos(zenith_angle);  // W/m^2
+  Scalar sun_flux =
+      std::max(Scalar(1362 / std::cos(zenith_angle)), Scalar(0.));  // W/m^2
 
   // TODO scatter factor should come from material properties of the underlying
   // mesh
-  constexpr Scalar scatter_factor = Scalar(1) / Scalar(10);
   constexpr Scalar absorb_factor = Scalar(3) / Scalar(4);
+  constexpr Scalar scatter_factor = 1 - absorb_factor;
 
   if (debug) {
     std::cerr << "Zenith angle is: " << zenith_angle << std::endl;
@@ -276,9 +277,12 @@ int main(int argc, char **argv) {
               t.stats.misses++;
               // for details on this math see pp14 of
               // https://www.sciencedirect.com/science/article/pii/S0304380017304842
-              Scalar absorbed = absorb_factor * sun_flux *
-                                glm::abs(bvh::dot(t.triangle.n, sun_norm)) /
-                                Scalar(rays_per_triangle);
+              Scalar total = sun_flux *
+                             glm::abs(bvh::dot(t.triangle.n, sun_norm)) /
+                             Scalar(rays_per_triangle);
+              Scalar absorbed = absorb_factor * total;
+              Scalar scattered = scatter_factor * total;
+
               // C++17 doesn't have the std::atomic specializations for
               // floating point types yet, so we just repeatedly CAS here
               // until we succeed.
@@ -289,7 +293,7 @@ int main(int argc, char **argv) {
               }
               for (Scalar sf = t.stats.scattered_flux;
                    !t.stats.scattered_flux.compare_exchange_strong(
-                       sf, sf + scatter_factor * absorbed);) {
+                       sf, sf + scattered);) {
                 ;
               }
             }
